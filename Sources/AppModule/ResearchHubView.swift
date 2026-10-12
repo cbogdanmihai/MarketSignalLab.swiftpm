@@ -2594,7 +2594,7 @@ private struct HoldoutMetric: View {
     }
 }
 
-private struct ResearchCard<Content: View>: View {
+struct ResearchCard<Content: View>: View {
     @Environment(\.terminalDensityScale)
     private var densityScale
 
@@ -2647,7 +2647,7 @@ private struct ResearchCard<Content: View>: View {
     }
 }
 
-private struct MetricTile: View {
+struct MetricTile: View {
     @Environment(\.terminalDensityScale)
     private var densityScale
 
