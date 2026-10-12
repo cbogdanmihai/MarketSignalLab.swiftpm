@@ -14,8 +14,8 @@ let package = Package(
             targets: ["AppModule"],
             bundleIdentifier: "com.marketsignallab.app",
             teamIdentifier: "",
-            displayVersion: "0.7.9",
-            bundleVersion: "41",
+            displayVersion: "0.7.10",
+            bundleVersion: "42",
             appIcon: .placeholder(icon: .star),
             accentColor: .presetColor(.blue),
             supportedDeviceFamilies: [
