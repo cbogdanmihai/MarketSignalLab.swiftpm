@@ -1,0 +1,1483 @@
+import Foundation
+
+enum BigShortWatchStatus:
+    String,
+    Codable,
+    Sendable {
+
+    case ready = "WATCH_READY"
+    case review = "REVIEW"
+    case insufficientEvents =
+        "INSUFFICIENT_EVENTS"
+}
+
+struct BigShortFoldMetrics:
+    Identifiable,
+    Codable,
+    Sendable {
+
+    let fold: Int
+    let trainSamples: Int
+    let validationSamples: Int
+    let testSamples: Int
+
+    let trainEvents: Int
+    let validationEvents: Int
+    let testEvents: Int
+
+    let selectedThreshold: Double
+    let selectedL2: Double
+
+    let alertRate: Double
+    let recall: Double
+    let precision: Double
+    let f2: Double
+    let brierScore: Double
+    let meanProbability: Double
+
+    var id: Int {
+        fold
+    }
+}
+
+struct BigShortWatchResult:
+    Codable,
+    Sendable {
+
+    let symbol: String
+    let generatedAt: Date
+    let horizonMinutes: Int
+    let minimumDropPct: Double
+    let atrMultiple: Double
+    let featureCount: Int
+    let contextCoverage: Double
+    let folds: [BigShortFoldMetrics]
+
+    var eventFoldCount: Int {
+        folds.filter {
+            $0.testEvents > 0
+        }
+        .count
+    }
+
+    var totalTestEvents: Int {
+        folds.reduce(0) {
+            $0 + $1.testEvents
+        }
+    }
+
+    var meanRecall: Double {
+        mean(
+            folds
+                .filter {
+                    $0.testEvents > 0
+                }
+                .map {
+                    $0.recall
+                }
+        )
+    }
+
+    var meanPrecision: Double {
+        mean(
+            folds
+                .filter {
+                    $0.testEvents > 0
+                }
+                .map {
+                    $0.precision
+                }
+        )
+    }
+
+    var meanAlertRate: Double {
+        mean(
+            folds.map {
+                $0.alertRate
+            }
+        )
+    }
+
+    var status: BigShortWatchStatus {
+        if eventFoldCount < 2
+            || totalTestEvents < 8 {
+
+            return .insufficientEvents
+        }
+
+        if meanRecall >= 0.60
+            && meanPrecision >= 0.08
+            && meanAlertRate <= 0.20 {
+
+            return .ready
+        }
+
+        return .review
+    }
+
+    var architectureFrozen: Bool {
+        status == .ready
+    }
+
+    private func mean(
+        _ values: [Double]
+    ) -> Double {
+        guard !values.isEmpty else {
+            return 0
+        }
+
+        return values.reduce(
+            0,
+            +
+        )
+        / Double(values.count)
+    }
+}
+
+enum BigShortWatchEngine {
+    static let minimumDropPct = 0.015
+    static let atrMultiple = 8.0
+    static let horizonMinutes = 90
+
+    private struct Example {
+        let x: [Double]
+        let y: Double
+    }
+
+    private struct Standardizer {
+        let mean: [Double]
+        let scale: [Double]
+
+        func transform(
+            _ values: [Double]
+        ) -> [Double] {
+            zip(
+                zip(values, mean),
+                scale
+            )
+            .map {
+                pair,
+                denominator in
+
+                let (
+                    value,
+                    center
+                ) = pair
+
+                return (
+                    value - center
+                )
+                / denominator
+            }
+        }
+    }
+
+    private struct LogisticModel {
+        let weights: [Double]
+        let bias: Double
+
+        func probability(
+            _ x: [Double]
+        ) -> Double {
+            var z = bias
+
+            for index in x.indices {
+                z +=
+                    weights[index]
+                    * x[index]
+            }
+
+            return sigmoid(z)
+        }
+    }
+
+    private struct PlattScaler {
+        let slope: Double
+        let intercept: Double
+
+        func probability(
+            rawProbability: Double
+        ) -> Double {
+            let raw =
+                min(
+                    max(
+                        rawProbability,
+                        0.000_001
+                    ),
+                    0.999_999
+                )
+
+            let logit =
+                log(
+                    raw / (1 - raw)
+                )
+
+            return sigmoid(
+                slope * logit
+                + intercept
+            )
+        }
+    }
+
+    static func run(
+        symbol: String,
+        rows: [ResearchRow],
+        folds: [WalkForwardFold],
+        contextBars:
+            [String: [MarketBar]]
+    ) -> BigShortWatchResult {
+        let context =
+            buildMarketContextFeatures(
+                rows: rows,
+                contextBars:
+                    contextBars
+            )
+
+        let coverage =
+            rows.isEmpty
+            ? 0
+            : Double(context.count)
+                / Double(rows.count)
+
+        var results:
+            [BigShortFoldMetrics] = []
+
+        for fold in folds {
+            if Task.isCancelled {
+                break
+            }
+
+            if let result =
+                runFold(
+                    fold: fold,
+                    rows: rows,
+                    context:
+                        context
+                ) {
+
+                results.append(
+                    result
+                )
+            }
+        }
+
+        return BigShortWatchResult(
+            symbol: symbol,
+            generatedAt: Date(),
+            horizonMinutes:
+                horizonMinutes,
+            minimumDropPct:
+                minimumDropPct,
+            atrMultiple:
+                atrMultiple,
+            featureCount: 28,
+            contextCoverage:
+                coverage,
+            folds: results
+        )
+    }
+
+    private static func runFold(
+        fold: WalkForwardFold,
+        rows: [ResearchRow],
+        context:
+            [String: [Double]]
+    ) -> BigShortFoldMetrics? {
+        let trainRows =
+            rows.filter {
+                $0.timestamp
+                    >= fold.trainStart
+                && $0.timestamp
+                    <= fold.trainEnd
+            }
+
+        let validationRows =
+            rows.filter {
+                $0.timestamp
+                    >= fold.validationStart
+                && $0.timestamp
+                    <= fold.validationEnd
+            }
+
+        let testRows =
+            rows.filter {
+                $0.timestamp
+                    >= fold.testStart
+                && $0.timestamp
+                    <= fold.testEnd
+            }
+
+        let rawTrain =
+            examples(
+                rows: trainRows,
+                context: context
+            )
+
+        let rawValidation =
+            examples(
+                rows:
+                    validationRows,
+                context: context
+            )
+
+        let rawTest =
+            examples(
+                rows: testRows,
+                context: context
+            )
+
+        guard
+            rawTrain.count >= 200,
+            rawValidation.count >= 50,
+            rawTest.count >= 50
+        else {
+            return nil
+        }
+
+        let standardizer =
+            fitStandardizer(
+                rawTrain.map {
+                    $0.x
+                }
+            )
+
+        let train =
+            rawTrain.map {
+                Example(
+                    x:
+                        standardizer
+                            .transform(
+                                $0.x
+                            ),
+                    y: $0.y
+                )
+            }
+
+        let validation =
+            rawValidation.map {
+                Example(
+                    x:
+                        standardizer
+                            .transform(
+                                $0.x
+                            ),
+                    y: $0.y
+                )
+            }
+
+        let test =
+            rawTest.map {
+                Example(
+                    x:
+                        standardizer
+                            .transform(
+                                $0.x
+                            ),
+                    y: $0.y
+                )
+            }
+
+        let selectedL2 =
+            selectRegularization(
+                examples: train
+            )
+
+        let model =
+            trainLogistic(
+                examples: train,
+                l2: selectedL2,
+                epochs: 50
+            )
+
+        let validationRaw =
+            validation.map {
+                model.probability(
+                    $0.x
+                )
+            }
+
+        let validationLabels =
+            validation.map {
+                $0.y
+            }
+
+        let scaler =
+            fitPlattScaler(
+                probabilities:
+                    validationRaw,
+                labels:
+                    validationLabels
+            )
+
+        let validationProbabilities =
+            validationRaw.map {
+                scaler.probability(
+                    rawProbability: $0
+                )
+            }
+
+        let threshold =
+            selectRecallThreshold(
+                probabilities:
+                    validationProbabilities,
+                labels:
+                    validationLabels
+            )
+
+        let testProbabilities =
+            test.map {
+                scaler.probability(
+                    rawProbability:
+                        model.probability(
+                            $0.x
+                        )
+                )
+            }
+
+        let testLabels =
+            test.map {
+                $0.y
+            }
+
+        let metrics =
+            metrics(
+                probabilities:
+                    testProbabilities,
+                labels:
+                    testLabels,
+                threshold:
+                    threshold
+            )
+
+        return BigShortFoldMetrics(
+            fold: fold.fold,
+            trainSamples:
+                train.count,
+            validationSamples:
+                validation.count,
+            testSamples:
+                test.count,
+            trainEvents:
+                positiveCount(train),
+            validationEvents:
+                positiveCount(
+                    validation
+                ),
+            testEvents:
+                positiveCount(test),
+            selectedThreshold:
+                threshold,
+            selectedL2:
+                selectedL2,
+            alertRate:
+                metrics.alertRate,
+            recall:
+                metrics.recall,
+            precision:
+                metrics.precision,
+            f2:
+                metrics.f2,
+            brierScore:
+                metrics.brier,
+            meanProbability:
+                metrics.meanProbability
+        )
+    }
+
+    private struct Metrics {
+        let alertRate: Double
+        let recall: Double
+        let precision: Double
+        let f2: Double
+        let brier: Double
+        let meanProbability: Double
+    }
+
+    private static func metrics(
+        probabilities: [Double],
+        labels: [Double],
+        threshold: Double
+    ) -> Metrics {
+        let count =
+            min(
+                probabilities.count,
+                labels.count
+            )
+
+        guard count > 0 else {
+            return Metrics(
+                alertRate: 0,
+                recall: 0,
+                precision: 0,
+                f2: 0,
+                brier: 0,
+                meanProbability: 0
+            )
+        }
+
+        var tp = 0
+        var fp = 0
+        var fn = 0
+        var alerts = 0
+        var brierSum = 0.0
+        var probabilitySum = 0.0
+
+        for index in 0..<count {
+            let probability =
+                probabilities[index]
+
+            let actual =
+                labels[index] >= 0.5
+
+            let predicted =
+                probability >= threshold
+
+            if predicted {
+                alerts += 1
+            }
+
+            if predicted && actual {
+                tp += 1
+            } else if predicted {
+                fp += 1
+            } else if actual {
+                fn += 1
+            }
+
+            let delta =
+                probability
+                - labels[index]
+
+            brierSum +=
+                delta * delta
+
+            probabilitySum +=
+                probability
+        }
+
+        let recall =
+            Double(tp)
+            / Double(
+                max(
+                    tp + fn,
+                    1
+                )
+            )
+
+        let precision =
+            Double(tp)
+            / Double(
+                max(
+                    tp + fp,
+                    1
+                )
+            )
+
+        let betaSquared = 4.0
+
+        let f2 =
+            precision + recall > 0
+            ? (
+                (1 + betaSquared)
+                * precision
+                * recall
+                / (
+                    betaSquared
+                    * precision
+                    + recall
+                )
+            )
+            : 0
+
+        return Metrics(
+            alertRate:
+                Double(alerts)
+                / Double(count),
+            recall: recall,
+            precision:
+                precision,
+            f2: f2,
+            brier:
+                brierSum
+                / Double(count),
+            meanProbability:
+                probabilitySum
+                / Double(count)
+        )
+    }
+
+    private static func selectRecallThreshold(
+        probabilities: [Double],
+        labels: [Double]
+    ) -> Double {
+        var bestThreshold = 0.25
+        var bestRecall = -1.0
+        var bestPrecision = -1.0
+        var bestF2 = -1.0
+        var fallbackThreshold = 0.25
+        var fallbackF2 = -1.0
+
+        var threshold = 0.025
+
+        while threshold <= 0.50 {
+            let result =
+                metrics(
+                    probabilities:
+                        probabilities,
+                    labels: labels,
+                    threshold:
+                        threshold
+                )
+
+            if result.f2
+                > fallbackF2 {
+
+                fallbackF2 =
+                    result.f2
+
+                fallbackThreshold =
+                    threshold
+            }
+
+            let acceptable =
+                result.alertRate <= 0.20
+                && result.precision
+                    >= 0.08
+
+            if acceptable,
+               (
+                    result.recall
+                        > bestRecall
+                    || (
+                        abs(
+                            result.recall
+                            - bestRecall
+                        ) < 1e-12
+                        && result.precision
+                            > bestPrecision
+                    )
+                    || (
+                        abs(
+                            result.recall
+                            - bestRecall
+                        ) < 1e-12
+                        && abs(
+                            result.precision
+                            - bestPrecision
+                        ) < 1e-12
+                        && result.f2
+                            > bestF2
+                    )
+               ) {
+
+                bestRecall =
+                    result.recall
+
+                bestPrecision =
+                    result.precision
+
+                bestF2 =
+                    result.f2
+
+                bestThreshold =
+                    threshold
+            }
+
+            threshold += 0.025
+        }
+
+        return bestRecall >= 0
+        ? bestThreshold
+        : fallbackThreshold
+    }
+
+    private static func selectRegularization(
+        examples: [Example]
+    ) -> Double {
+        let candidates = [
+            0.05,
+            0.25,
+            1.0
+        ]
+
+        let split =
+            max(
+                100,
+                Int(
+                    Double(
+                        examples.count
+                    )
+                    * 0.75
+                )
+            )
+
+        guard
+            split < examples.count
+                - 50
+        else {
+            return 0.25
+        }
+
+        let innerTrain =
+            Array(
+                examples[
+                    0..<split
+                ]
+            )
+
+        let innerValidation =
+            Array(
+                examples[
+                    split
+                        ..< examples.count
+                ]
+            )
+
+        let tuningTrain =
+            evenlySample(
+                innerTrain,
+                maximumCount:
+                    1_500
+            )
+
+        let labels =
+            innerValidation.map {
+                $0.y
+            }
+
+        var bestL2 = 0.25
+        var bestBrier =
+            Double.greatestFiniteMagnitude
+
+        for l2 in candidates {
+            if Task.isCancelled {
+                break
+            }
+
+            let model =
+                trainLogistic(
+                    examples:
+                        tuningTrain,
+                    l2: l2,
+                    epochs: 20
+                )
+
+            let probabilities =
+                innerValidation.map {
+                    model.probability(
+                        $0.x
+                    )
+                }
+
+            let brier =
+                meanSquaredError(
+                    probabilities:
+                        probabilities,
+                    labels: labels
+                )
+
+            if brier < bestBrier {
+                bestBrier = brier
+                bestL2 = l2
+            }
+        }
+
+        return bestL2
+    }
+
+    private static func trainLogistic(
+        examples: [Example],
+        l2: Double,
+        epochs: Int
+    ) -> LogisticModel {
+        guard
+            let first =
+                examples.first
+        else {
+            return LogisticModel(
+                weights: [],
+                bias: 0
+            )
+        }
+
+        let featureCount =
+            first.x.count
+
+        var weights =
+            Array(
+                repeating: 0.0,
+                count: featureCount
+            )
+
+        let positives =
+            Double(
+                positiveCount(
+                    examples
+                )
+            )
+
+        let negatives =
+            Double(examples.count)
+            - positives
+
+        let positiveWeight =
+            positives > 0
+            ? min(
+                max(
+                    negatives
+                    / positives,
+                    1
+                ),
+                12
+            )
+            : 1
+
+        let prior =
+            min(
+                max(
+                    positives
+                    / Double(
+                        max(
+                            examples.count,
+                            1
+                        )
+                    ),
+                    0.001
+                ),
+                0.999
+            )
+
+        var bias =
+            log(
+                prior
+                / (1 - prior)
+            )
+
+        let learningRate = 0.05
+        let n =
+            Double(
+                max(
+                    examples.count,
+                    1
+                )
+            )
+
+        for _ in 0..<epochs {
+            if Task.isCancelled {
+                break
+            }
+
+            var gradient =
+                Array(
+                    repeating: 0.0,
+                    count: featureCount
+                )
+
+            var biasGradient = 0.0
+
+            for example in examples {
+                var z = bias
+
+                for index in
+                    0..<featureCount {
+
+                    z +=
+                        weights[index]
+                        * example.x[index]
+                }
+
+                let probability =
+                    sigmoid(z)
+
+                let sampleWeight =
+                    example.y >= 0.5
+                    ? positiveWeight
+                    : 1
+
+                let error =
+                    (
+                        probability
+                        - example.y
+                    )
+                    * sampleWeight
+
+                biasGradient +=
+                    error
+
+                for index in
+                    0..<featureCount {
+
+                    gradient[index] +=
+                        error
+                        * example.x[index]
+                }
+            }
+
+            bias -=
+                learningRate
+                * (
+                    biasGradient / n
+                )
+
+            for index in
+                0..<featureCount {
+
+                weights[index] -=
+                    learningRate
+                    * (
+                        gradient[index]
+                        / n
+                        + l2
+                        * weights[index]
+                    )
+            }
+        }
+
+        return LogisticModel(
+            weights: weights,
+            bias: bias
+        )
+    }
+
+    private static func fitPlattScaler(
+        probabilities: [Double],
+        labels: [Double]
+    ) -> PlattScaler {
+        let count =
+            min(
+                probabilities.count,
+                labels.count
+            )
+
+        guard count > 0 else {
+            return PlattScaler(
+                slope: 1,
+                intercept: 0
+            )
+        }
+
+        var slope = 1.0
+        var intercept = 0.0
+
+        let positives =
+            labels.reduce(0) {
+                $0 + $1
+            }
+
+        let negatives =
+            Double(count)
+            - positives
+
+        let positiveWeight =
+            positives > 0
+            ? min(
+                max(
+                    negatives
+                    / positives,
+                    1
+                ),
+                12
+            )
+            : 1
+
+        for _ in 0..<80 {
+            if Task.isCancelled {
+                break
+            }
+
+            var slopeGradient = 0.0
+            var interceptGradient = 0.0
+
+            for index in 0..<count {
+                let raw =
+                    min(
+                        max(
+                            probabilities[index],
+                            0.000_001
+                        ),
+                        0.999_999
+                    )
+
+                let logit =
+                    log(
+                        raw / (1 - raw)
+                    )
+
+                let predicted =
+                    sigmoid(
+                        slope * logit
+                        + intercept
+                    )
+
+                let sampleWeight =
+                    labels[index] >= 0.5
+                    ? positiveWeight
+                    : 1
+
+                let error =
+                    (
+                        predicted
+                        - labels[index]
+                    )
+                    * sampleWeight
+
+                slopeGradient +=
+                    error * logit
+
+                interceptGradient +=
+                    error
+            }
+
+            let n =
+                Double(count)
+
+            slope -=
+                0.02
+                * (
+                    slopeGradient / n
+                    + 0.001 * slope
+                )
+
+            intercept -=
+                0.02
+                * (
+                    interceptGradient / n
+                )
+        }
+
+        return PlattScaler(
+            slope: slope,
+            intercept: intercept
+        )
+    }
+
+    private static func examples(
+        rows: [ResearchRow],
+        context:
+            [String: [Double]]
+    ) -> [Example] {
+        rows.compactMap { row in
+            guard
+                let contextFeatures =
+                    context[row.id]
+            else {
+                return nil
+            }
+
+            let severeDrop =
+                max(
+                    minimumDropPct,
+                    atrMultiple
+                    * row.atr14Pct
+                )
+
+            let event =
+                row.maePct
+                    <= -severeDrop
+
+            return Example(
+                x:
+                    coreFeatures(row)
+                    + contextFeatures,
+                y:
+                    event
+                    ? 1
+                    : 0
+            )
+        }
+    }
+
+    private static func coreFeatures(
+        _ row: ResearchRow
+    ) -> [Double] {
+        [
+            Double(
+                row.minuteOfSession
+            ),
+            row.sessionProgress,
+            row.return1,
+            row.return5,
+            row.return15,
+            row.return30,
+            row.return60,
+            row.rangePct,
+            row.atr14Pct,
+            row.realizedVol20,
+            row.volumeZ20 ?? 0,
+            row.distanceToSMA20,
+            row.distanceToSMA50,
+            row.distanceToSessionHigh,
+            row.distanceToSessionLow,
+            row.distanceToSessionVWAP
+                ?? 0
+        ]
+    }
+
+    private static func buildMarketContextFeatures(
+        rows: [ResearchRow],
+        contextBars:
+            [String: [MarketBar]]
+    ) -> [String: [Double]] {
+        let requiredSymbols = [
+            "SPY",
+            "IWM",
+            "VIXY"
+        ]
+
+        var featureBySymbol:
+            [String: [Date: [Double]]] = [:]
+
+        for symbol in requiredSymbols {
+            guard
+                let bars =
+                    contextBars[symbol],
+                !bars.isEmpty
+            else {
+                return [:]
+            }
+
+            featureBySymbol[symbol] =
+                marketFeaturesByTimestamp(
+                    bars: bars
+                )
+        }
+
+        var result:
+            [String: [Double]] = [:]
+
+        for row in rows {
+            guard
+                let spy =
+                    featureBySymbol["SPY"]?[
+                        row.timestamp
+                    ],
+                let iwm =
+                    featureBySymbol["IWM"]?[
+                        row.timestamp
+                    ],
+                let vixy =
+                    featureBySymbol["VIXY"]?[
+                        row.timestamp
+                    ]
+            else {
+                continue
+            }
+
+            result[row.id] =
+                spy + iwm + vixy
+        }
+
+        return result
+    }
+
+    private static func marketFeaturesByTimestamp(
+        bars: [MarketBar]
+    ) -> [Date: [Double]] {
+        let timezone =
+            TimeZone(
+                identifier:
+                    "America/New_York"
+            )
+            ?? .current
+
+        var calendar =
+            Calendar(
+                identifier:
+                    .gregorian
+            )
+
+        calendar.timeZone =
+            timezone
+
+        let regularBars =
+            bars.filter { bar in
+                let components =
+                    calendar.dateComponents(
+                        [.hour, .minute],
+                        from:
+                            bar.timestamp
+                    )
+
+                guard
+                    let hour =
+                        components.hour,
+                    let minute =
+                        components.minute
+                else {
+                    return false
+                }
+
+                let minuteOfDay =
+                    hour * 60 + minute
+
+                return minuteOfDay >= 570
+                    && minuteOfDay < 960
+            }
+            .sorted {
+                $0.timestamp
+                    < $1.timestamp
+            }
+
+        let grouped =
+            Dictionary(
+                grouping:
+                    regularBars
+            ) { bar in
+                let components =
+                    calendar.dateComponents(
+                        [.year, .month, .day],
+                        from:
+                            bar.timestamp
+                    )
+
+                return "\(components.year ?? 0)-\(components.month ?? 0)-\(components.day ?? 0)"
+            }
+
+        var result:
+            [Date: [Double]] = [:]
+
+        for session in grouped.values {
+            let ordered =
+                session.sorted {
+                    $0.timestamp
+                        < $1.timestamp
+                }
+
+            guard
+                let first =
+                    ordered.first
+            else {
+                continue
+            }
+
+            for index in ordered.indices {
+                guard index >= 60 else {
+                    continue
+                }
+
+                let current =
+                    ordered[index]
+
+                result[
+                    current.timestamp
+                ] = [
+                    safeReturn(
+                        current.close,
+                        ordered[
+                            index - 5
+                        ].close
+                    ),
+                    safeReturn(
+                        current.close,
+                        ordered[
+                            index - 15
+                        ].close
+                    ),
+                    safeReturn(
+                        current.close,
+                        ordered[
+                            index - 60
+                        ].close
+                    ),
+                    safeReturn(
+                        current.close,
+                        first.close
+                    )
+                ]
+            }
+        }
+
+        return result
+    }
+
+    private static func fitStandardizer(
+        _ matrix: [[Double]]
+    ) -> Standardizer {
+        guard
+            let first =
+                matrix.first
+        else {
+            return Standardizer(
+                mean: [],
+                scale: []
+            )
+        }
+
+        let featureCount =
+            first.count
+
+        var mean =
+            Array(
+                repeating: 0.0,
+                count: featureCount
+            )
+
+        for row in matrix {
+            for index in
+                0..<featureCount {
+
+                mean[index] +=
+                    row[index]
+            }
+        }
+
+        let n =
+            Double(
+                max(
+                    matrix.count,
+                    1
+                )
+            )
+
+        for index in mean.indices {
+            mean[index] /= n
+        }
+
+        var variance =
+            Array(
+                repeating: 0.0,
+                count: featureCount
+            )
+
+        for row in matrix {
+            for index in
+                0..<featureCount {
+
+                let delta =
+                    row[index]
+                    - mean[index]
+
+                variance[index] +=
+                    delta * delta
+            }
+        }
+
+        var scale =
+            variance.map {
+                sqrt(
+                    $0 / n
+                )
+            }
+
+        for index in scale.indices {
+            if !scale[index].isFinite
+                || scale[index] < 1e-9 {
+
+                scale[index] = 1
+            }
+        }
+
+        return Standardizer(
+            mean: mean,
+            scale: scale
+        )
+    }
+
+    private static func positiveCount(
+        _ examples: [Example]
+    ) -> Int {
+        examples.filter {
+            $0.y >= 0.5
+        }
+        .count
+    }
+
+    private static func meanSquaredError(
+        probabilities: [Double],
+        labels: [Double]
+    ) -> Double {
+        let count =
+            min(
+                probabilities.count,
+                labels.count
+            )
+
+        guard count > 0 else {
+            return 0
+        }
+
+        var sum = 0.0
+
+        for index in 0..<count {
+            let delta =
+                probabilities[index]
+                - labels[index]
+
+            sum +=
+                delta * delta
+        }
+
+        return sum
+            / Double(count)
+    }
+
+    private static func evenlySample(
+        _ examples: [Example],
+        maximumCount: Int
+    ) -> [Example] {
+        guard
+            maximumCount > 1,
+            examples.count
+                > maximumCount
+        else {
+            return examples
+        }
+
+        let step =
+            Double(
+                examples.count - 1
+            )
+            / Double(
+                maximumCount - 1
+            )
+
+        return (
+            0..<maximumCount
+        )
+        .map {
+            index in
+
+            examples[
+                min(
+                    examples.count - 1,
+                    Int(
+                        round(
+                            Double(index)
+                            * step
+                        )
+                    )
+                )
+            ]
+        }
+    }
+
+    private static func safeReturn(
+        _ end: Double,
+        _ start: Double
+    ) -> Double {
+        guard start != 0 else {
+            return 0
+        }
+
+        return end / start - 1
+    }
+
+    private static func sigmoid(
+        _ value: Double
+    ) -> Double {
+        let clamped =
+            min(
+                max(
+                    value,
+                    -35
+                ),
+                35
+            )
+
+        return 1
+            / (
+                1
+                + exp(-clamped)
+            )
+    }
+}
