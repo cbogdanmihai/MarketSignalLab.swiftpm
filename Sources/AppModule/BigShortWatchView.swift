@@ -7,9 +7,9 @@ struct BigShortWatchView: View {
     var body: some View {
         ResearchCard(
             title:
-                "Phase 2D.1 · Big Short Watch",
+                "Phase 2D.4 · Robust Tail-Risk Validation",
             subtitle:
-                "Rare severe-downside detector · recall-first objective · development folds only · sealed holdout untouched"
+                "Five-fold chronological validation · pre-event matching · Stress38 features · deterministic Market Stress Monitor · prospective holdout untouched"
         ) {
             VStack(
                 alignment: .leading,
@@ -64,7 +64,7 @@ struct BigShortWatchView: View {
                 )
 
                 Text(
-                    "Development experiment compares three independent downside tiers: Tail Watch max(0.75%, 4×ATR14), Big Short max(1.25%, 6×ATR14), and Crash Watch max(1.50%, 8×ATR14). The most severe tier that passes the development gate is selected."
+                    "Each alert only counts as a hit if it occurs on a causal row whose forward window actually contains the later downside event. The experiment compares Tail Watch, Big Short and Crash Watch with Stress38 features, plus a separate deterministic Market Stress Monitor benchmark."
                 )
                 .font(.caption)
                 .foregroundStyle(
@@ -134,7 +134,7 @@ struct BigShortWatchView: View {
 
             MetricTile(
                 title:
-                    "Event recall",
+                    "Pre-event recall",
                 value:
                     percent(
                         result.meanRecall
@@ -151,7 +151,7 @@ struct BigShortWatchView: View {
                         result.meanPrecision
                     ),
                 subtitle:
-                    "Recall-first detector"
+                    "Matched before event"
             )
 
             MetricTile(
@@ -163,6 +163,28 @@ struct BigShortWatchView: View {
                     ),
                 subtitle:
                     "Target ≤ 20%"
+            )
+
+            MetricTile(
+                title:
+                    "Stress recall",
+                value:
+                    percent(
+                        result.stressMeanRecall
+                    ),
+                subtitle:
+                    "Deterministic monitor"
+            )
+
+            MetricTile(
+                title:
+                    "Stress alerts",
+                value:
+                    percent(
+                        result.stressMeanAlertRate
+                    ),
+                subtitle:
+                    "Fixed rule benchmark"
             )
 
             MetricTile(
@@ -228,9 +250,16 @@ struct BigShortWatchView: View {
                             )
 
                             compactMetric(
-                                "Recall",
+                                "Pre-event",
                                 percent(
                                     candidate.meanRecall
+                                )
+                            )
+
+                            compactMetric(
+                                "Stress",
+                                percent(
+                                    candidate.stressMeanRecall
                                 )
                             )
 
@@ -265,7 +294,7 @@ struct BigShortWatchView: View {
                                 .caption.bold()
                             )
                             .foregroundStyle(
-                                candidate.status == .ready
+                                candidate.architectureFrozen
                                 ? Color.green
                                 : Color.orange
                             )
@@ -311,9 +340,16 @@ struct BigShortWatchView: View {
                         )
 
                         compactMetric(
-                            "Recall",
+                            "Pre-event",
                             percent(
                                 fold.recall
+                            )
+                        )
+
+                        compactMetric(
+                            "Stress",
+                            percent(
+                                fold.stressRecall
                             )
                         )
 
@@ -335,6 +371,13 @@ struct BigShortWatchView: View {
                             "Alert",
                             percent(
                                 fold.alertRate
+                            )
+                        )
+
+                        compactMetric(
+                            "Stress alert",
+                            percent(
+                                fold.stressAlertRate
                             )
                         )
 
@@ -382,9 +425,20 @@ struct BigShortWatchView: View {
         switch result.status {
         case .ready:
             Label(
-                "Big Short Watch passed its development gate. It can be frozen together with the LONG architecture before the final holdout.",
+                "The probabilistic Tail-Risk Watch passed the development gate using pre-event matching. It can be frozen with the directional architecture.",
                 systemImage:
                     "checkmark.seal.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(
+                .green
+            )
+
+        case .stressReady:
+            Label(
+                "The learned detector did not pass, but the deterministic Market Stress Monitor did. Freeze it only as a WATCH layer, not as an automatic SHORT entry.",
+                systemImage:
+                    "checkmark.shield.fill"
             )
             .font(.caption)
             .foregroundStyle(
