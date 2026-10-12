@@ -701,7 +701,7 @@ enum BigShortWatchEngine {
                 )
             }
 
-        let metrics =
+        let modelMetrics =
             metrics(
                 probabilities:
                     testProbabilities,
@@ -756,17 +756,17 @@ enum BigShortWatchEngine {
             selectedL2:
                 selectedL2,
             alertRate:
-                metrics.alertRate,
+                modelMetrics.alertRate,
             recall:
-                metrics.recall,
+                modelMetrics.recall,
             precision:
-                metrics.precision,
+                modelMetrics.precision,
             f2:
-                metrics.f2,
+                modelMetrics.f2,
             brierScore:
-                metrics.brier,
+                modelMetrics.brier,
             meanProbability:
-                metrics.meanProbability,
+                modelMetrics.meanProbability,
             stressAlertRate:
                 stressMetrics.alertRate,
             stressRecall:
