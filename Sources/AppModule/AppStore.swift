@@ -3225,7 +3225,7 @@ final class AppStore: ObservableObject {
 
         case .insufficientEvents:
             bigShortMessage =
-                "Big Short Watch has insufficient rare events: \(result.totalTestEvents) severe events across \(result.eventFoldCount)/\(result.folds.count) development test folds. Add more historical sessions before freezing the detector."
+                "Big Short Watch has insufficient rare-event sessions: \(result.totalTestEvents) severe sessions across \(result.eventFoldCount)/\(result.folds.count) development test folds. Add more historical sessions before freezing the detector."
         }
 
         log(
