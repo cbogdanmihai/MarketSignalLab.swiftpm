@@ -6,6 +6,7 @@ enum BigShortWatchStatus:
     Sendable {
 
     case ready = "WATCH_READY"
+    case stressReady = "STRESS_READY"
     case review = "REVIEW"
     case insufficientEvents =
         "INSUFFICIENT_EVENTS"
@@ -93,6 +94,11 @@ struct BigShortFoldMetrics:
     let brierScore: Double
     let meanProbability: Double
 
+    let stressAlertRate: Double
+    let stressRecall: Double
+    let stressPrecision: Double
+    let stressF2: Double
+
     var id: Int {
         fold
     }
@@ -171,6 +177,38 @@ struct BigShortWatchResult:
         )
     }
 
+    var stressMeanRecall: Double {
+        mean(
+            folds
+                .filter {
+                    $0.testEvents > 0
+                }
+                .map {
+                    $0.stressRecall
+                }
+        )
+    }
+
+    var stressMeanPrecision: Double {
+        mean(
+            folds
+                .filter {
+                    $0.testEvents > 0
+                }
+                .map {
+                    $0.stressPrecision
+                }
+        )
+    }
+
+    var stressMeanAlertRate: Double {
+        mean(
+            folds.map {
+                $0.stressAlertRate
+            }
+        )
+    }
+
     var status: BigShortWatchStatus {
         if eventFoldCount < 2
             || totalTestEvents < 4 {
@@ -185,11 +223,19 @@ struct BigShortWatchResult:
             return .ready
         }
 
+        if stressMeanRecall >= 0.60
+            && stressMeanPrecision >= 0.10
+            && stressMeanAlertRate <= 0.20 {
+
+            return .stressReady
+        }
+
         return .review
     }
 
     var architectureFrozen: Bool {
         status == .ready
+            || status == .stressReady
     }
 
     private func mean(
@@ -213,6 +259,7 @@ enum BigShortWatchEngine {
         let sessionKey: String
         let x: [Double]
         let y: Double
+        let stressScore: Double
     }
 
     private struct Standardizer {
@@ -555,7 +602,9 @@ enum BigShortWatchEngine {
                             .transform(
                                 $0.x
                             ),
-                    y: $0.y
+                    y: $0.y,
+                    stressScore:
+                        $0.stressScore
                 )
             }
 
@@ -571,7 +620,9 @@ enum BigShortWatchEngine {
                             .transform(
                                 $0.x
                             ),
-                    y: $0.y
+                    y: $0.y,
+                    stressScore:
+                        $0.stressScore
                 )
             }
 
@@ -587,7 +638,9 @@ enum BigShortWatchEngine {
                             .transform(
                                 $0.x
                             ),
-                    y: $0.y
+                    y: $0.y,
+                    stressScore:
+                        $0.stressScore
                 )
             }
 
@@ -658,6 +711,18 @@ enum BigShortWatchEngine {
                     threshold
             )
 
+        let stressMetrics =
+            metrics(
+                probabilities:
+                    test.map {
+                        $0.stressScore
+                    },
+                examples:
+                    test,
+                threshold:
+                    0.50
+            )
+
         return BigShortFoldMetrics(
             fold: fold.fold,
             trainSamples:
@@ -701,7 +766,15 @@ enum BigShortWatchEngine {
             brierScore:
                 metrics.brier,
             meanProbability:
-                metrics.meanProbability
+                metrics.meanProbability,
+            stressAlertRate:
+                stressMetrics.alertRate,
+            stressRecall:
+                stressMetrics.recall,
+            stressPrecision:
+                stressMetrics.precision,
+            stressF2:
+                stressMetrics.f2
         )
     }
 
@@ -1417,6 +1490,13 @@ enum BigShortWatchEngine {
                 row.maePct
                     <= -severeDrop
 
+            let stress =
+                stressFeatures(
+                    row,
+                    contextFeatures:
+                        contextFeatures
+                )
+
             return Example(
                 timestamp:
                     row.timestamp,
@@ -1425,15 +1505,19 @@ enum BigShortWatchEngine {
                 x:
                     coreFeatures(row)
                     + contextFeatures
-                    + stressFeatures(
-                        row,
-                        contextFeatures:
-                            contextFeatures
-                    ),
+                    + stress,
                 y:
                     event
                     ? 1
-                    : 0
+                    : 0,
+                stressScore:
+                    deterministicStressScore(
+                        row,
+                        contextFeatures:
+                            contextFeatures,
+                        stressFeatures:
+                            stress
+                    )
             )
         }
     }
@@ -1559,6 +1643,78 @@ enum BigShortWatchEngine {
             vixReturn5,
             vixAcceleration
         ]
+    }
+
+    private static func deterministicStressScore(
+        _ row: ResearchRow,
+        contextFeatures:
+            [Double],
+        stressFeatures:
+            [Double]
+    ) -> Double {
+        guard
+            contextFeatures.count >= 12,
+            stressFeatures.count >= 10
+        else {
+            return 0
+        }
+
+        let atr =
+            max(
+                row.atr14Pct,
+                0.000_001
+            )
+
+        var points = 0.0
+
+        if row.return5 <= -0.003 {
+            points += 1
+        }
+
+        if row.return15 <= -0.006 {
+            points += 1
+        }
+
+        if stressFeatures[0]
+            <= -0.0015 {
+
+            points += 1
+        }
+
+        if row.rangePct / atr >= 1.5 {
+            points += 1
+        }
+
+        if (row.volumeZ20 ?? 0) >= 1.5 {
+            points += 1
+        }
+
+        if (row.distanceToSessionVWAP ?? 0)
+            <= -0.002 {
+
+            points += 1
+        }
+
+        if stressFeatures[5] >= 0.65 {
+            points += 1
+        }
+
+        if contextFeatures[1] <= -0.004 {
+            points += 1
+        }
+
+        if contextFeatures[5] <= -0.005 {
+            points += 1
+        }
+
+        if contextFeatures[8] >= 0.01
+            || stressFeatures[9]
+                >= 0.005 {
+
+            points += 1
+        }
+
+        return points / 10.0
     }
 
     private static func buildMarketContextFeatures(
