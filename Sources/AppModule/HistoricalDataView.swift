@@ -36,9 +36,6 @@ struct HistoricalDataView: View {
     private var bulkScope:
         BulkHistoryScope = .tradeable
 
-    @State
-    private var skipFullyCovered = true
-
     private var estimatedChunks: Int {
         store.estimatedHistoricalChunks(
             startDate: startDate,
@@ -280,11 +277,9 @@ struct HistoricalDataView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    Toggle(
-                        "Skip fully covered symbols",
-                        isOn:
-                            $skipFullyCovered
-                    )
+                    Text("Gap-safe import: all requested intervals are rechecked. Existing bars are deduplicated; first/last timestamps do not prove complete coverage.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                     LabeledContent(
                         "Assets",
@@ -397,7 +392,7 @@ struct HistoricalDataView: View {
                                     endDate:
                                         endDate,
                                     skipFullyCovered:
-                                        skipFullyCovered
+                                        false
                                 )
                         }
                     } label: {

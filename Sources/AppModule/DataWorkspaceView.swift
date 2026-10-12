@@ -253,7 +253,7 @@ struct DataWorkspaceView: View {
                     to: end
                 ).day ?? 0
 
-        return "~\(max(days, 0))d"
+        return "~\(max(days, 0))d span"
     }
 }
 
