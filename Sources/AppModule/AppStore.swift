@@ -1154,7 +1154,8 @@ final class AppStore: ObservableObject {
         assets requestedAssets: [AssetConfig],
         startDate: Date,
         endDate: Date,
-        skipFullyCovered: Bool
+        skipFullyCovered: Bool,
+        chunkDays: Int = 3
     ) async {
         guard !isDownloadingHistory,
               !isDownloadingAllHistory
@@ -1210,7 +1211,9 @@ final class AppStore: ObservableObject {
         let chunks =
             historicalChunks(
                 startDate: startDate,
-                endDate: endDate
+                endDate: endDate,
+                chunkDays:
+                    chunkDays
             )
 
         isDownloadingAllHistory = true
@@ -1739,10 +1742,20 @@ final class AppStore: ObservableObject {
 
     private func historicalChunks(
         startDate: Date,
-        endDate: Date
+        endDate: Date,
+        chunkDays: Int = 3
     ) -> [(start: Date, end: Date)] {
+        let safeDays =
+            max(
+                1,
+                chunkDays
+            )
+
         let chunkSeconds: TimeInterval =
-            3 * 24 * 60 * 60
+            Double(
+                safeDays
+            )
+            * 24 * 60 * 60
 
         var chunks: [(Date, Date)] = []
         var cursor = startDate
