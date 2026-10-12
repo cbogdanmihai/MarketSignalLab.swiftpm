@@ -295,7 +295,7 @@ struct BigShortWatchView: View {
 
         case .insufficientEvents:
             Label(
-                "There are not enough independent severe-downside events to validate this detector. Add substantially more historical sessions before using the final holdout.",
+                "There are not enough independent severe-downside sessions to validate this detector. Add substantially more historical sessions before using the final holdout.",
                 systemImage:
                     "clock.badge.exclamationmark"
             )
