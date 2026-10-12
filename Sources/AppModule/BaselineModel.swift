@@ -340,32 +340,130 @@ struct BaselineExperimentResult:
         for candidates:
             [BaselineRunResult]
     ) -> BaselineDirectionalGateSummary {
-        let bestLong =
-            candidates.max {
-                $0.meanLongSkill
-                    < $1.meanLongSkill
-            }
+        let longCandidate =
+            Self.candidateForGate(
+                direction: .long,
+                candidates:
+                    candidates
+            )
 
-        let bestShort =
-            candidates.max {
-                $0.meanShortSkill
-                    < $1.meanShortSkill
-            }
+        let shortCandidate =
+            Self.candidateForGate(
+                direction: .short,
+                candidates:
+                    candidates
+            )
 
         return BaselineDirectionalGateSummary(
             long:
                 Self.makeGate(
                     direction: .long,
                     candidate:
-                        bestLong
+                        longCandidate
                 ),
             short:
                 Self.makeGate(
                     direction: .short,
                     candidate:
-                        bestShort
+                        shortCandidate
                 )
         )
+    }
+
+    private static func candidateForGate(
+        direction:
+            BaselineDirection,
+        candidates:
+            [BaselineRunResult]
+    ) -> BaselineRunResult? {
+        func folds(
+            _ candidate:
+                BaselineRunResult
+        ) -> [BaselineFoldResult] {
+            direction == .long
+            ? candidate.longFolds
+            : candidate.shortFolds
+        }
+
+        func meanSkill(
+            _ candidate:
+                BaselineRunResult
+        ) -> Double {
+            direction == .long
+            ? candidate.meanLongSkill
+            : candidate.meanShortSkill
+        }
+
+        func qualifies(
+            _ candidate:
+                BaselineRunResult
+        ) -> Bool {
+            let candidateFolds =
+                folds(candidate)
+
+            guard
+                candidateFolds.count
+                    >= 3
+            else {
+                return false
+            }
+
+            let positiveCount =
+                candidateFolds.filter {
+                    $0.brierSkill > 0
+                }
+                .count
+
+            return meanSkill(candidate) > 0
+                && positiveCount >= 2
+        }
+
+        let eligible =
+            candidates.filter(
+                qualifies
+            )
+
+        let pool =
+            eligible.isEmpty
+            ? candidates
+            : eligible
+
+        return pool.max {
+            lhs,
+            rhs in
+
+            let lhsMean =
+                meanSkill(lhs)
+
+            let rhsMean =
+                meanSkill(rhs)
+
+            if abs(
+                lhsMean - rhsMean
+            ) > 1e-12 {
+                return lhsMean
+                    < rhsMean
+            }
+
+            let lhsWorst =
+                folds(lhs)
+                    .map {
+                        $0.brierSkill
+                    }
+                    .min()
+                ?? -.infinity
+
+            let rhsWorst =
+                folds(rhs)
+                    .map {
+                        $0.brierSkill
+                    }
+                    .min()
+                ?? -.infinity
+
+            return lhsWorst
+                < rhsWorst
+        }
     }
 
     private static func makeGate(
