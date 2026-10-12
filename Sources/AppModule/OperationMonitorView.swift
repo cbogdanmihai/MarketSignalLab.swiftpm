@@ -385,3 +385,147 @@ struct BaselineRunMonitorView: View {
         )
     }
 }
+
+
+struct BigShortRunMonitorView: View {
+    @EnvironmentObject
+    private var store: AppStore
+
+    var body: some View {
+        TimelineView(
+            .periodic(
+                from: .now,
+                by: 1
+            )
+        ) { context in
+            if let started =
+                store.bigShortTrainingStartedAt {
+
+                let elapsed =
+                    max(
+                        0,
+                        context.date
+                            .timeIntervalSince(
+                                started
+                            )
+                    )
+
+                let remaining =
+                    store
+                        .bigShortTrainingDeadline
+                        .map {
+                            $0.timeIntervalSince(
+                                context.date
+                            )
+                        }
+
+                HStack(spacing: 18) {
+                    VStack(
+                        alignment: .leading,
+                        spacing: 2
+                    ) {
+                        Text("Elapsed")
+                            .font(.caption2)
+                            .foregroundStyle(
+                                .secondary
+                            )
+
+                        Text(
+                            durationText(
+                                elapsed
+                            )
+                        )
+                        .font(
+                            .caption.bold()
+                                .monospacedDigit()
+                        )
+                    }
+
+                    VStack(
+                        alignment: .leading,
+                        spacing: 2
+                    ) {
+                        Text("2-min watchdog")
+                            .font(.caption2)
+                            .foregroundStyle(
+                                .secondary
+                            )
+
+                        Text(
+                            remaining
+                            .map {
+                                $0 > 0
+                                ? durationText($0)
+                                : "EXPIRED"
+                            }
+                            ?? "—"
+                        )
+                        .font(
+                            .caption.bold()
+                                .monospacedDigit()
+                        )
+                    }
+
+                    Spacer()
+
+                    Button(
+                        role: .destructive
+                    ) {
+                        store
+                            .cancelBigShortWatchTraining()
+                    } label: {
+                        Label(
+                            store
+                                .bigShortCancellationRequested
+                            ? "Cancelling…"
+                            : "Cancel",
+                            systemImage:
+                                "xmark.circle.fill"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(
+                        store
+                            .bigShortCancellationRequested
+                    )
+                }
+
+            } else if let duration =
+                store.bigShortLastRunDuration {
+
+                Label(
+                    "Last Big Short Watch run: \(durationText(duration))",
+                    systemImage:
+                        "timer"
+                )
+                .font(.caption)
+                .foregroundStyle(
+                    .secondary
+                )
+            }
+        }
+    }
+
+    private func durationText(
+        _ interval: TimeInterval
+    ) -> String {
+        let total =
+            max(
+                0,
+                Int(interval.rounded())
+            )
+
+        let minutes =
+            total / 60
+
+        let seconds =
+            total % 60
+
+        return String(
+            format:
+                "%02d:%02d",
+            minutes,
+            seconds
+        )
+    }
+}
