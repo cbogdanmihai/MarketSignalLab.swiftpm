@@ -137,8 +137,6 @@ struct BigShortWatchResult:
 enum BigShortWatchEngine {
     static let minimumDropPct = 0.015
     static let atrMultiple = 8.0
-    static let horizonMinutes = 90
-
     private struct Example {
         let x: [Double]
         let y: Double
@@ -223,6 +221,7 @@ enum BigShortWatchEngine {
         symbol: String,
         rows: [ResearchRow],
         folds: [WalkForwardFold],
+        horizonMinutes: Int,
         contextBars:
             [String: [MarketBar]]
     ) -> BigShortWatchResult {
