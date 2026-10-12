@@ -305,3 +305,18 @@ The detector now evaluates tail risk at the session level:
 The development readiness gate now requires severe events in at least two test folds and at least four independent severe-event sessions in total.
 
 Research also includes **Extend Tail History · 1Y** for insufficient-event cases. The workflow downloads QQQ (or the selected tradeable) plus SPY, IWM and VIXY in sequential provider-safe windows, uses seven-day market-data chunks, rebuilds the locked-policy research dataset, and reruns Big Short Watch automatically. The final sealed holdout remains untouched.
+
+
+## Phase 2D.3 — Multi-tier tail risk
+
+One year of expanded QQQ/context development data still produced only two independent max(1.5%, 8×ATR14) severe-downside sessions across the development test folds. That is insufficient to validate a direct crash detector.
+
+The tail-risk architecture therefore becomes hierarchical instead of forcing one ultra-rare label:
+
+- Tail Watch: max(0.75%, 4×ATR14)
+- Big Short: max(1.25%, 6×ATR14)
+- Crash Watch: max(1.50%, 8×ATR14)
+
+All three tiers are evaluated on the same chronological development folds. The experiment selects the most severe tier that passes the recall/precision/alert-rate development gate. A less-severe tier is an early-warning detector, not an automatic short entry.
+
+The final holdout remains locked. Because the expanded development workflow consumed the previously remainder-based data partition during model development, those sessions are not treated as pristine final OOS data. Phase 2E is now presented as a prospective holdout: after the architecture is frozen, fresh future sessions must be collected before one-time final evaluation.
