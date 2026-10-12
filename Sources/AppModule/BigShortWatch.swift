@@ -464,7 +464,7 @@ enum BigShortWatchEngine {
                 definition.minimumDropPct,
             atrMultiple:
                 definition.atrMultiple,
-            featureCount: 28,
+            featureCount: 38,
             contextCoverage:
                 contextCoverage,
             folds: results
@@ -739,6 +739,7 @@ enum BigShortWatchEngine {
         struct SessionState {
             var hasEvent = false
             var hasAlert = false
+            var hasMatchedPreEventAlert = false
         }
 
         var sessions:
@@ -760,12 +761,25 @@ enum BigShortWatchEngine {
                 ]
                 ?? SessionState()
 
-            if example.y >= 0.5 {
+            let isEventRow =
+                example.y >= 0.5
+
+            let isAlertRow =
+                probability >= threshold
+
+            if isEventRow {
                 state.hasEvent = true
             }
 
-            if probability >= threshold {
+            if isAlertRow {
                 state.hasAlert = true
+            }
+
+            if isEventRow
+                && isAlertRow {
+
+                state.hasMatchedPreEventAlert =
+                    true
             }
 
             sessions[
@@ -802,8 +816,7 @@ enum BigShortWatchEngine {
 
         let trueAlertSessions =
             states.filter {
-                $0.hasEvent
-                    && $0.hasAlert
+                $0.hasMatchedPreEventAlert
             }
             .count
 
@@ -1411,7 +1424,12 @@ enum BigShortWatchEngine {
                     row.sessionKey,
                 x:
                     coreFeatures(row)
-                    + contextFeatures,
+                    + contextFeatures
+                    + stressFeatures(
+                        row,
+                        contextFeatures:
+                            contextFeatures
+                    ),
                 y:
                     event
                     ? 1
@@ -1443,6 +1461,103 @@ enum BigShortWatchEngine {
             row.distanceToSessionLow,
             row.distanceToSessionVWAP
                 ?? 0
+        ]
+    }
+
+    private static func stressFeatures(
+        _ row: ResearchRow,
+        contextFeatures:
+            [Double]
+    ) -> [Double] {
+        guard
+            contextFeatures.count >= 12
+        else {
+            return Array(
+                repeating: 0,
+                count: 10
+            )
+        }
+
+        let atr =
+            max(
+                row.atr14Pct,
+                0.000_001
+            )
+
+        let return5Acceleration =
+            row.return5
+            - row.return15 / 3.0
+
+        let return15Acceleration =
+            row.return15
+            - row.return60 / 4.0
+
+        let rangeExpansion =
+            row.rangePct / atr
+
+        let volumeShock =
+            max(
+                row.volumeZ20 ?? 0,
+                0
+            )
+
+        let belowVWAPNormalized =
+            min(
+                row.distanceToSessionVWAP
+                    ?? 0,
+                0
+            )
+            / atr
+
+        let distanceToLowATR =
+            max(
+                row.distanceToSessionLow,
+                0
+            )
+            / atr
+
+        let sessionLowPressure =
+            1.0
+            / (
+                1.0
+                + distanceToLowATR
+            )
+
+        let spyReturn15 =
+            contextFeatures[1]
+
+        let iwmReturn15 =
+            contextFeatures[5]
+
+        let vixReturn5 =
+            contextFeatures[8]
+
+        let vixReturn15 =
+            contextFeatures[9]
+
+        let relativeWeaknessSPY =
+            row.return15
+            - spyReturn15
+
+        let relativeWeaknessIWM =
+            row.return15
+            - iwmReturn15
+
+        let vixAcceleration =
+            vixReturn5
+            - vixReturn15 / 3.0
+
+        return [
+            return5Acceleration,
+            return15Acceleration,
+            rangeExpansion,
+            volumeShock,
+            belowVWAPNormalized,
+            sessionLowPressure,
+            relativeWeaknessSPY,
+            relativeWeaknessIWM,
+            vixReturn5,
+            vixAcceleration
         ]
     }
 
