@@ -210,6 +210,15 @@ final class AppStore: ObservableObject {
         "Tail-risk history extension has not been run."
 
     @Published private(set)
+    var bigShortHistoryWindowIndex = 0
+
+    @Published private(set)
+    var bigShortHistoryWindowCount = 0
+
+    @Published private(set)
+    var bigShortHistoryStartedAt: Date?
+
+    @Published private(set)
     var isPreparingBaselineContext = false
 
     @Published private(set)
@@ -1742,6 +1751,14 @@ final class AppStore: ObservableObject {
             bigShortMessage =
                 "Historical data changed; Big Short Watch must be retrained."
 
+            if isPreparingBigShortHistory {
+                researchMessage =
+                    "Tail-risk history is still downloading. The previous research dataset was intentionally invalidated and will be rebuilt automatically when all history windows finish."
+            } else {
+                researchMessage =
+                    "Historical data changed; rebuild the research dataset before continuing."
+            }
+
             labelCalibrationMessage =
                 "Historical data changed; calibration cache cleared. Any locked policy remains frozen until explicitly changed."
         }
@@ -3115,6 +3132,12 @@ final class AppStore: ObservableObject {
         isPreparingBigShortHistory =
             true
 
+        bigShortHistoryStartedAt =
+            Date()
+
+        bigShortHistoryWindowIndex = 0
+        bigShortHistoryWindowCount = 0
+
         bigShortHistoryMessage =
             "Extending \(asset.symbol), SPY, IWM and VIXY to approximately \(days) calendar days of 1-minute history…"
 
@@ -3126,6 +3149,8 @@ final class AppStore: ObservableObject {
         defer {
             isPreparingBigShortHistory =
                 false
+            bigShortHistoryStartedAt =
+                nil
         }
 
         var windows:
@@ -3155,13 +3180,19 @@ final class AppStore: ObservableObject {
             cursor = next
         }
 
+        bigShortHistoryWindowCount =
+            windows.count
+
         for (
             index,
             window
         ) in windows.enumerated() {
 
+            bigShortHistoryWindowIndex =
+                index + 1
+
             bigShortHistoryMessage =
-                "Tail-risk history window \(index + 1)/\(windows.count)…"
+                "Tail-risk history window \(index + 1)/\(windows.count) · downloading \(asset.symbol), SPY, IWM and VIXY…"
 
             await downloadHistoricalDataForAll(
                 assets:
@@ -3220,6 +3251,9 @@ final class AppStore: ObservableObject {
         )
 
         await trainBigShortWatch()
+
+        bigShortHistoryWindowIndex =
+            bigShortHistoryWindowCount
 
         bigShortHistoryMessage =
             "Expanded tail-risk history workflow complete."
