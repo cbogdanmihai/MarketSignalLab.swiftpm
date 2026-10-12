@@ -25,6 +25,10 @@ struct BigShortFoldMetrics:
     let validationEvents: Int
     let testEvents: Int
 
+    let trainEventRows: Int
+    let validationEventRows: Int
+    let testEventRows: Int
+
     let selectedThreshold: Double
     let selectedL2: Double
 
@@ -100,7 +104,7 @@ struct BigShortWatchResult:
 
     var status: BigShortWatchStatus {
         if eventFoldCount < 2
-            || totalTestEvents < 8 {
+            || totalTestEvents < 4 {
 
             return .insufficientEvents
         }
@@ -138,6 +142,8 @@ enum BigShortWatchEngine {
     static let minimumDropPct = 0.015
     static let atrMultiple = 8.0
     private struct Example {
+        let timestamp: Date
+        let sessionKey: String
         let x: [Double]
         let y: Double
     }
@@ -343,6 +349,10 @@ enum BigShortWatchEngine {
         let train =
             rawTrain.map {
                 Example(
+                    timestamp:
+                        $0.timestamp,
+                    sessionKey:
+                        $0.sessionKey,
                     x:
                         standardizer
                             .transform(
@@ -355,6 +365,10 @@ enum BigShortWatchEngine {
         let validation =
             rawValidation.map {
                 Example(
+                    timestamp:
+                        $0.timestamp,
+                    sessionKey:
+                        $0.sessionKey,
                     x:
                         standardizer
                             .transform(
@@ -367,6 +381,10 @@ enum BigShortWatchEngine {
         let test =
             rawTest.map {
                 Example(
+                    timestamp:
+                        $0.timestamp,
+                    sessionKey:
+                        $0.sessionKey,
                     x:
                         standardizer
                             .transform(
@@ -419,8 +437,8 @@ enum BigShortWatchEngine {
             selectRecallThreshold(
                 probabilities:
                     validationProbabilities,
-                labels:
-                    validationLabels
+                examples:
+                    validation
             )
 
         let testProbabilities =
@@ -433,17 +451,12 @@ enum BigShortWatchEngine {
                 )
             }
 
-        let testLabels =
-            test.map {
-                $0.y
-            }
-
         let metrics =
             metrics(
                 probabilities:
                     testProbabilities,
-                labels:
-                    testLabels,
+                examples:
+                    test,
                 threshold:
                     threshold
             )
@@ -457,12 +470,24 @@ enum BigShortWatchEngine {
             testSamples:
                 test.count,
             trainEvents:
-                positiveCount(train),
+                positiveSessionCount(
+                    train
+                ),
             validationEvents:
-                positiveCount(
+                positiveSessionCount(
                     validation
                 ),
             testEvents:
+                positiveSessionCount(
+                    test
+                ),
+            trainEventRows:
+                positiveCount(train),
+            validationEventRows:
+                positiveCount(
+                    validation
+                ),
+            testEventRows:
                 positiveCount(test),
             selectedThreshold:
                 threshold,
@@ -494,13 +519,13 @@ enum BigShortWatchEngine {
 
     private static func metrics(
         probabilities: [Double],
-        labels: [Double],
+        examples: [Example],
         threshold: Double
     ) -> Metrics {
         let count =
             min(
                 probabilities.count,
-                labels.count
+                examples.count
             )
 
         guard count > 0 else {
@@ -514,10 +539,14 @@ enum BigShortWatchEngine {
             )
         }
 
-        var tp = 0
-        var fp = 0
-        var fn = 0
-        var alerts = 0
+        struct SessionState {
+            var hasEvent = false
+            var hasAlert = false
+        }
+
+        var sessions:
+            [String: SessionState] = [:]
+
         var brierSum = 0.0
         var probabilitySum = 0.0
 
@@ -525,27 +554,30 @@ enum BigShortWatchEngine {
             let probability =
                 probabilities[index]
 
-            let actual =
-                labels[index] >= 0.5
+            let example =
+                examples[index]
 
-            let predicted =
-                probability >= threshold
+            var state =
+                sessions[
+                    example.sessionKey
+                ]
+                ?? SessionState()
 
-            if predicted {
-                alerts += 1
+            if example.y >= 0.5 {
+                state.hasEvent = true
             }
 
-            if predicted && actual {
-                tp += 1
-            } else if predicted {
-                fp += 1
-            } else if actual {
-                fn += 1
+            if probability >= threshold {
+                state.hasAlert = true
             }
+
+            sessions[
+                example.sessionKey
+            ] = state
 
             let delta =
                 probability
-                - labels[index]
+                - example.y
 
             brierSum +=
                 delta * delta
@@ -554,20 +586,48 @@ enum BigShortWatchEngine {
                 probability
         }
 
+        let states =
+            Array(
+                sessions.values
+            )
+
+        let eventSessions =
+            states.filter {
+                $0.hasEvent
+            }
+            .count
+
+        let alertedSessions =
+            states.filter {
+                $0.hasAlert
+            }
+            .count
+
+        let trueAlertSessions =
+            states.filter {
+                $0.hasEvent
+                    && $0.hasAlert
+            }
+            .count
+
         let recall =
-            Double(tp)
+            Double(
+                trueAlertSessions
+            )
             / Double(
                 max(
-                    tp + fn,
+                    eventSessions,
                     1
                 )
             )
 
         let precision =
-            Double(tp)
+            Double(
+                trueAlertSessions
+            )
             / Double(
                 max(
-                    tp + fp,
+                    alertedSessions,
                     1
                 )
             )
@@ -590,8 +650,15 @@ enum BigShortWatchEngine {
 
         return Metrics(
             alertRate:
-                Double(alerts)
-                / Double(count),
+                Double(
+                    alertedSessions
+                )
+                / Double(
+                    max(
+                        states.count,
+                        1
+                    )
+                ),
             recall: recall,
             precision:
                 precision,
@@ -607,32 +674,94 @@ enum BigShortWatchEngine {
 
     private static func selectRecallThreshold(
         probabilities: [Double],
-        labels: [Double]
+        examples: [Example]
     ) -> Double {
+        let count =
+            min(
+                probabilities.count,
+                examples.count
+            )
+
+        guard count > 0 else {
+            return 0.25
+        }
+
+        let usedExamples =
+            Array(
+                examples.prefix(
+                    count
+                )
+            )
+
+        if positiveSessionCount(
+            usedExamples
+        ) == 0 {
+
+            let sorted =
+                Array(
+                    probabilities
+                        .prefix(count)
+                )
+                .sorted()
+
+            let index =
+                min(
+                    sorted.count - 1,
+                    Int(
+                        floor(
+                            Double(
+                                sorted.count - 1
+                            )
+                            * 0.95
+                        )
+                    )
+                )
+
+            return max(
+                0.10,
+                sorted[index]
+            )
+        }
+
         var bestThreshold = 0.25
         var bestRecall = -1.0
         var bestPrecision = -1.0
         var bestF2 = -1.0
+
         var fallbackThreshold = 0.25
-        var fallbackF2 = -1.0
+        var fallbackScore =
+            -Double.greatestFiniteMagnitude
 
-        var threshold = 0.025
+        var threshold = 0.05
 
-        while threshold <= 0.50 {
+        while threshold <= 0.60 {
             let result =
                 metrics(
                     probabilities:
                         probabilities,
-                    labels: labels,
+                    examples:
+                        examples,
                     threshold:
                         threshold
                 )
 
-            if result.f2
-                > fallbackF2 {
+            let excessAlertRate =
+                max(
+                    0,
+                    result.alertRate
+                        - 0.20
+                )
 
-                fallbackF2 =
-                    result.f2
+            let fallback =
+                result.f2
+                - 2.0
+                * excessAlertRate
+
+            if fallback
+                > fallbackScore {
+
+                fallbackScore =
+                    fallback
 
                 fallbackThreshold =
                     threshold
@@ -641,7 +770,7 @@ enum BigShortWatchEngine {
             let acceptable =
                 result.alertRate <= 0.20
                 && result.precision
-                    >= 0.08
+                    >= 0.10
 
             if acceptable,
                (
@@ -1075,6 +1204,10 @@ enum BigShortWatchEngine {
                     <= -severeDrop
 
             return Example(
+                timestamp:
+                    row.timestamp,
+                sessionKey:
+                    row.sessionKey,
                 x:
                     coreFeatures(row)
                     + contextFeatures,
@@ -1370,6 +1503,21 @@ enum BigShortWatchEngine {
             mean: mean,
             scale: scale
         )
+    }
+
+    private static func positiveSessionCount(
+        _ examples: [Example]
+    ) -> Int {
+        Set(
+            examples
+                .filter {
+                    $0.y >= 0.5
+                }
+                .map {
+                    $0.sessionKey
+                }
+        )
+        .count
     }
 
     private static func positiveCount(
