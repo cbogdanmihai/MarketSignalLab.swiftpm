@@ -98,6 +98,8 @@ struct BigShortWatchView: View {
                 || store
                     .isTrainingBaseline
                 || store
+                    .isPreparingBigShortHistory
+                || store
                     .selectedLockedLabelPolicy
                     == nil
             )
@@ -294,15 +296,70 @@ struct BigShortWatchView: View {
             )
 
         case .insufficientEvents:
-            Label(
-                "There are not enough independent severe-downside sessions to validate this detector. Add substantially more historical sessions before using the final holdout.",
-                systemImage:
-                    "clock.badge.exclamationmark"
-            )
-            .font(.caption)
-            .foregroundStyle(
-                .orange
-            )
+            VStack(
+                alignment: .leading,
+                spacing: 10
+            ) {
+                Label(
+                    "There are not enough independent severe-downside sessions to validate this detector. Add substantially more historical sessions before using the final holdout.",
+                    systemImage:
+                        "clock.badge.exclamationmark"
+                )
+                .font(.caption)
+                .foregroundStyle(
+                    .orange
+                )
+
+                Text(
+                    store.bigShortHistoryMessage
+                )
+                .font(.caption)
+                .foregroundStyle(
+                    .secondary
+                )
+
+                HStack {
+                    Button {
+                        Task {
+                            await store
+                                .prepareBigShortHistory(
+                                    days: 365
+                                )
+                        }
+                    } label: {
+                        Label(
+                            store
+                                .isPreparingBigShortHistory
+                            ? "Extending History…"
+                            : "Extend Tail History · 1Y",
+                            systemImage:
+                                "calendar.badge.plus"
+                        )
+                    }
+                    .buttonStyle(
+                        .borderedProminent
+                    )
+                    .disabled(
+                        store
+                            .isPreparingBigShortHistory
+                        || store
+                            .isDownloadingHistory
+                        || store
+                            .isTrainingBigShortWatch
+                    )
+
+                    Spacer()
+                }
+
+                if store.isPreparingBigShortHistory
+                    || store.isDownloadingHistory {
+
+                    HistoryRunMonitorView()
+                        .environmentObject(
+                            store
+                        )
+                }
+            }
         }
     }
 
