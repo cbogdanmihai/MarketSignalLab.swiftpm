@@ -64,7 +64,7 @@ struct BigShortWatchView: View {
                 )
 
                 Text(
-                    "Event label: within the locked horizon, downside excursion reaches at least max(1.5%, 8×ATR14). This detector is separate from the ordinary SHORT model."
+                    "Development experiment compares three independent downside tiers: Tail Watch max(0.75%, 4×ATR14), Big Short max(1.25%, 6×ATR14), and Crash Watch max(1.50%, 8×ATR14). The most severe tier that passes the development gate is selected."
                 )
                 .font(.caption)
                 .foregroundStyle(
@@ -114,6 +114,15 @@ struct BigShortWatchView: View {
         HStack(spacing: 12) {
             MetricTile(
                 title:
+                    "Selected tier",
+                value:
+                    result.tierTitle,
+                subtitle:
+                    "max(\(String(format: "%.2f", result.minimumDropPct * 100))%, \(String(format: "%.0f", result.atrMultiple))×ATR14)"
+            )
+
+            MetricTile(
+                title:
                     "Watch status",
                 value:
                     result.status.rawValue,
@@ -131,7 +140,7 @@ struct BigShortWatchView: View {
                         result.meanRecall
                     ),
                 subtitle:
-                    "\(result.totalTestEvents) severe events"
+                    "\(result.totalTestEvents) event sessions"
             )
 
             MetricTile(
@@ -174,6 +183,104 @@ struct BigShortWatchView: View {
         _ result:
             BigShortWatchResult
     ) -> some View {
+        if store.bigShortCandidates.count > 1 {
+            DisclosureGroup(
+                "Tail-risk tier candidates"
+            ) {
+                VStack(spacing: 8) {
+                    ForEach(
+                        store.bigShortCandidates,
+                        id: \.tierID
+                    ) { candidate in
+                        HStack(
+                            spacing: 14
+                        ) {
+                            VStack(
+                                alignment: .leading,
+                                spacing: 2
+                            ) {
+                                Text(
+                                    candidate.tierTitle
+                                )
+                                .font(
+                                    .caption.bold()
+                                )
+
+                                Text(
+                                    "max(\(String(format: "%.2f", candidate.minimumDropPct * 100))%, \(String(format: "%.0f", candidate.atrMultiple))×ATR14)"
+                                )
+                                .font(.caption2)
+                                .foregroundStyle(
+                                    .secondary
+                                )
+                            }
+                            .frame(
+                                width: 150,
+                                alignment:
+                                    .leading
+                            )
+
+                            compactMetric(
+                                "Events",
+                                String(
+                                    candidate.totalTestEvents
+                                )
+                            )
+
+                            compactMetric(
+                                "Recall",
+                                percent(
+                                    candidate.meanRecall
+                                )
+                            )
+
+                            compactMetric(
+                                "Precision",
+                                percent(
+                                    candidate.meanPrecision
+                                )
+                            )
+
+                            compactMetric(
+                                "F2",
+                                percent(
+                                    candidate.meanF2
+                                )
+                            )
+
+                            compactMetric(
+                                "Alert",
+                                percent(
+                                    candidate.meanAlertRate
+                                )
+                            )
+
+                            Spacer()
+
+                            Text(
+                                candidate.status
+                                    .rawValue
+                            )
+                            .font(
+                                .caption.bold()
+                            )
+                            .foregroundStyle(
+                                candidate.status == .ready
+                                ? Color.green
+                                : Color.orange
+                            )
+                        }
+
+                        Divider()
+                    }
+                }
+                .padding(
+                    .top,
+                    8
+                )
+            }
+        }
+
         DisclosureGroup(
             "Big Short development folds"
         ) {
