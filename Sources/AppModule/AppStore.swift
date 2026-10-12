@@ -2499,7 +2499,7 @@ final class AppStore: ObservableObject {
                 == true
         else {
             baselineMessage =
-                "Baseline training requires a locked-policy dataset with three walk-forward folds."
+                "Baseline training requires a locked-policy dataset with at least three walk-forward folds."
 
             log(
                 "warning",
@@ -3322,7 +3322,7 @@ final class AppStore: ObservableObject {
                 == true
         else {
             bigShortMessage =
-                "Big Short Watch requires the locked-policy dataset with three development folds."
+                "Big Short Watch requires the locked-policy dataset with at least three development folds."
 
             log(
                 "warning",
