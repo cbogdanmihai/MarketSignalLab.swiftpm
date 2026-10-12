@@ -3523,11 +3523,15 @@ final class AppStore: ObservableObject {
         switch result.status {
         case .ready:
             bigShortMessage =
-                "\(severityText) READY: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%."
+                "\(severityText) WATCH model READY: pre-event recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%."
+
+        case .stressReady:
+            bigShortMessage =
+                "\(severityText) deterministic Market Stress Monitor READY: pre-event recall \(Int(round(result.stressMeanRecall * 100)))%, precision \(Int(round(result.stressMeanPrecision * 100)))%, alert rate \(Int(round(result.stressMeanAlertRate * 100)))%."
 
         case .review:
             bigShortMessage =
-                "\(severityText) has enough events but needs refinement: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%."
+                "\(severityText) has enough events but needs refinement: model pre-event recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%; stress-monitor recall \(Int(round(result.stressMeanRecall * 100)))%."
 
         case .insufficientEvents:
             bigShortMessage =
@@ -3535,7 +3539,7 @@ final class AppStore: ObservableObject {
         }
 
         log(
-            result.status == .ready
+            result.architectureFrozen
             ? "info"
             : "warning",
             bigShortMessage
