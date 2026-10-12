@@ -767,21 +767,30 @@ enum ResearchDatasetBuilder {
             return lhs < rhs
         }
 
-        // Three expanding folds require enough independent sessions.
-        // We intentionally split only at session boundaries so a single
-        // trading day never appears in both train and validation/test.
+        // Use more expanding folds once enough independent sessions
+        // exist. We split only at session boundaries so a single trading
+        // day never appears in both train and validation/test.
         guard sessionKeys.count >= 18 else {
             return []
         }
 
+        let foldCount =
+            sessionKeys.count >= 40
+            ? 5
+            : 3
+
+        let totalBlocks =
+            foldCount + 3
+
         let blockSize = max(
             3,
-            sessionKeys.count / 6
+            sessionKeys.count
+                / totalBlocks
         )
 
         var folds: [WalkForwardFold] = []
 
-        for fold in 1...3 {
+        for fold in 1...foldCount {
             let trainEndExclusive =
                 blockSize * (fold + 1)
 
