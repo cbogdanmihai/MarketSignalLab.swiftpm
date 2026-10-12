@@ -414,8 +414,16 @@ struct BaselineExperimentResult:
                 }
                 .count
 
+            let requiredPositive =
+                max(
+                    2,
+                    (candidateFolds.count + 1)
+                        / 2
+                )
+
             return meanSkill(candidate) > 0
-                && positiveCount >= 2
+                && positiveCount
+                    >= requiredPositive
         }
 
         let eligible =
@@ -514,8 +522,16 @@ struct BaselineExperimentResult:
         let enoughFolds =
             folds.count >= 3
 
+        let requiredPositiveFolds =
+            max(
+                2,
+                (folds.count + 1)
+                    / 2
+            )
+
         let stableEnough =
-            positiveFoldCount >= 2
+            positiveFoldCount
+                >= requiredPositiveFolds
 
         let enabled =
             enoughFolds
@@ -534,11 +550,11 @@ struct BaselineExperimentResult:
 
         } else if !stableEnough {
             reason =
-                "Positive skill appears in fewer than two of three folds."
+                "Positive skill appears in fewer than \(requiredPositiveFolds) of \(folds.count) development folds."
 
         } else {
             reason =
-                "Positive mean Brier skill with at least two positive development folds."
+                "Positive mean Brier skill with \(positiveFoldCount)/\(folds.count) positive development folds."
         }
 
         return BaselineDirectionGate(
