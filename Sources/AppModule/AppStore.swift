@@ -203,6 +203,13 @@ final class AppStore: ObservableObject {
         false
 
     @Published private(set)
+    var isPreparingBigShortHistory = false
+
+    @Published private(set)
+    var bigShortHistoryMessage =
+        "Tail-risk history extension has not been run."
+
+    @Published private(set)
     var isPreparingBaselineContext = false
 
     @Published private(set)
@@ -3002,6 +3009,224 @@ final class AppStore: ObservableObject {
         log(
             "warning",
             bigShortMessage
+        )
+    }
+
+    func prepareBigShortHistory(
+        days: Int = 365
+    ) async {
+        guard
+            let asset =
+                selectedAsset
+        else {
+            return
+        }
+
+        guard
+            !isPreparingBigShortHistory,
+            !isDownloadingHistory,
+            !isDownloadingAllHistory,
+            !isTrainingBaseline,
+            !isTrainingBigShortWatch
+        else {
+            return
+        }
+
+        let requestedSymbols = [
+            asset.symbol,
+            "SPY",
+            "IWM",
+            "VIXY"
+        ]
+
+        var seen =
+            Set<String>()
+
+        let requiredAssets =
+            requestedSymbols.compactMap {
+                symbol -> AssetConfig? in
+
+                guard
+                    !seen.contains(
+                        symbol
+                    ),
+                    let found =
+                        assets.first(
+                            where: {
+                                $0.symbol
+                                    .uppercased()
+                                    == symbol
+                                        .uppercased()
+                            }
+                        )
+                else {
+                    return nil
+                }
+
+                seen.insert(
+                    symbol
+                )
+
+                return found
+            }
+
+        guard
+            requiredAssets.count
+                == Set(
+                    requestedSymbols
+                )
+                .count
+        else {
+            bigShortHistoryMessage =
+                "Cannot extend tail-risk history because one or more required symbols are missing from the universe."
+
+            log(
+                "error",
+                bigShortHistoryMessage
+            )
+
+            return
+        }
+
+        let endDate =
+            Date()
+
+        let requestedStart =
+            Calendar.current.date(
+                byAdding: .day,
+                value:
+                    -max(
+                        days,
+                        120
+                    ),
+                to: endDate
+            )
+            ?? endDate
+                .addingTimeInterval(
+                    -Double(
+                        max(
+                            days,
+                            120
+                        )
+                    )
+                    * 24 * 60 * 60
+                )
+
+        isPreparingBigShortHistory =
+            true
+
+        bigShortHistoryMessage =
+            "Extending \(asset.symbol), SPY, IWM and VIXY to approximately \(days) calendar days of 1-minute history…"
+
+        log(
+            "info",
+            bigShortHistoryMessage
+        )
+
+        defer {
+            isPreparingBigShortHistory =
+                false
+        }
+
+        var windows:
+            [(Date, Date)] = []
+
+        var cursor =
+            requestedStart
+
+        let maximumWindow:
+            TimeInterval =
+            85 * 24 * 60 * 60
+
+        while cursor < endDate {
+            let next =
+                min(
+                    cursor
+                        .addingTimeInterval(
+                            maximumWindow
+                        ),
+                    endDate
+                )
+
+            windows.append(
+                (cursor, next)
+            )
+
+            cursor = next
+        }
+
+        for (
+            index,
+            window
+        ) in windows.enumerated() {
+
+            bigShortHistoryMessage =
+                "Tail-risk history window \(index + 1)/\(windows.count)…"
+
+            await downloadHistoricalDataForAll(
+                assets:
+                    requiredAssets,
+                startDate:
+                    window.0,
+                endDate:
+                    window.1,
+                skipFullyCovered:
+                    true,
+                chunkDays: 7
+            )
+
+            let lower =
+                historyBatchMessage
+                    .lowercased()
+
+            if lower.contains(
+                "cancel"
+            )
+                || lower.contains(
+                    "watchdog"
+                )
+                || lower.contains(
+                    "api key"
+                ) {
+
+                bigShortHistoryMessage =
+                    "Tail-risk history extension stopped: \(historyBatchMessage)"
+
+                log(
+                    "warning",
+                    bigShortHistoryMessage
+                )
+
+                return
+            }
+        }
+
+        bigShortHistoryMessage =
+            "History extension complete. Rebuilding the locked-policy research dataset…"
+
+        log(
+            "info",
+            bigShortHistoryMessage
+        )
+
+        await buildResearchDataset()
+
+        bigShortHistoryMessage =
+            "Research dataset rebuilt. Training Big Short Watch on the expanded history…"
+
+        log(
+            "info",
+            bigShortHistoryMessage
+        )
+
+        await trainBigShortWatch()
+
+        bigShortHistoryMessage =
+            "Expanded tail-risk history workflow complete."
+
+        log(
+            "info",
+            bigShortHistoryMessage
         )
     }
 
