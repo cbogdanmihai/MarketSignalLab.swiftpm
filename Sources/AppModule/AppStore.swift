@@ -1303,45 +1303,10 @@ final class AppStore: ObservableObject {
             historyBatchCurrentSymbol =
                 asset.symbol
 
-            if skipFullyCovered {
-                let stats =
-                    (try? await repository
-                        .stats(
-                            symbol:
-                                asset.symbol,
-                            timeframe:
-                                "1min"
-                        ))
-                    ?? .empty
-
-                if let earliest =
-                        stats.earliest,
-                   let latest =
-                        stats.latest,
-                   earliest <= startDate,
-                   latest >= endDate {
-
-                    historyBatchSkippedAssets += 1
-                    historyBatchCompletedAssets += 1
-                    historyCompletedChunks +=
-                        chunks.count
-
-                    storageOverview[
-                        asset.symbol
-                    ] = stats
-
-                    markHistoryProgress(
-                        "\(asset.symbol) skipped · requested range already covered"
-                    )
-
-                    log(
-                        "info",
-                        "Bulk history skipped \(asset.symbol): requested range already covered."
-                    )
-
-                    continue
-                }
-            }
+            // Do not infer minute-bar completeness from earliest/latest timestamps.
+            // Missing intraday or whole-session bars can exist between them.
+            // Always re-fetch the requested chunks; repository.save deduplicates.
+            // The skipFullyCovered argument remains for call-site compatibility.
 
             invalidateResearchCaches(
                 for: asset
