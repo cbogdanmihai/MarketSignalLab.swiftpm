@@ -287,3 +287,21 @@ Historical data operations now expose:
 Twelve Data HTTP calls now use an explicit 30-second request timeout. Bulk runs have a computed watchdog based on request count, with a safety floor and cap, so an overnight spinner is no longer treated as normal operation.
 
 Console output includes tagged HTTP timing lines without exposing the API key.
+
+
+## Phase 2D.2 — Independent tail events
+
+The first Big Short Watch run exposed two issues: too few severe-downside observations and row-level event counting that could overstate the number of independent tail events.
+
+The detector now evaluates tail risk at the session level:
+
+- a development session counts as one severe event if any eligible row reaches the severe-downside label;
+- recall measures the share of severe-event sessions with at least one alert;
+- precision measures the share of alerted sessions that were actually severe-event sessions;
+- alert rate measures the share of sessions that generated at least one alert;
+- validation thresholds are chosen on these session-level metrics;
+- validation folds with no severe events use a conservative high-probability threshold instead of collapsing to an ultra-low alert threshold.
+
+The development readiness gate now requires severe events in at least two test folds and at least four independent severe-event sessions in total.
+
+Research also includes **Extend Tail History · 1Y** for insufficient-event cases. The workflow downloads QQQ (or the selected tradeable) plus SPY, IWM and VIXY in sequential provider-safe windows, uses seven-day market-data chunks, rebuilds the locked-policy research dataset, and reruns Big Short Watch automatically. The final sealed holdout remains untouched.
