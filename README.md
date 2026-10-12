@@ -320,3 +320,19 @@ The tail-risk architecture therefore becomes hierarchical instead of forcing one
 All three tiers are evaluated on the same chronological development folds. The experiment selects the most severe tier that passes the recall/precision/alert-rate development gate. A less-severe tier is an early-warning detector, not an automatic short entry.
 
 The final holdout remains locked. Because the expanded development workflow consumed the previously remainder-based data partition during model development, those sessions are not treated as pristine final OOS data. Phase 2E is now presented as a prospective holdout: after the architecture is frozen, fresh future sessions must be collected before one-time final evaluation.
+
+
+## Phase 2D.4 — Robust validation and stress features
+
+The expanded historical run showed that a simple same-session tail-event score was not strict enough for the user's objective of catching major selloffs without flooding the terminal with false short alerts.
+
+Phase 2D.4 therefore makes four architecture changes before any final holdout is opened:
+
+- walk-forward validation automatically expands from three to five chronological folds when at least 40 independent sessions are available;
+- the directional LONG/SHORT gate now requires a majority of development folds to have positive Brier skill, rather than always using a fixed 2-of-3 rule;
+- tail-risk recall is now counted only when an alert occurs on a causal row whose forward horizon actually contains the later downside event, so an unrelated alert elsewhere in the same session no longer counts as a hit;
+- Big Short Watch adds ten causal stress features on top of the original Core16 + SPY/IWM/VIXY context: short-horizon downside acceleration, medium-horizon acceleration, range expansion, positive volume shock, normalized below-VWAP pressure, session-low pressure, relative weakness versus SPY and IWM, VIXY 5-minute return, and VIXY acceleration.
+
+A separate deterministic **Market Stress Monitor** is evaluated beside the learned detector. It uses only contemporaneous information such as downside momentum, range expansion, volume shock, below-VWAP pressure, broad-market weakness and VIXY acceleration. It can qualify only as a WATCH layer; it is not an automatic short-entry rule.
+
+The final prospective holdout remains locked. Phase 2D.4 must first establish a stable directional gate and either a learned tail-risk WATCH model or a validated deterministic stress-monitor fallback.
