@@ -224,7 +224,7 @@ struct ResearchDatasetView: View {
 
                         } else {
                             Text(
-                                "Build the dataset first. With enough history, the app creates three expanding walk-forward folds split only on full-session boundaries."
+                                "Build the dataset first. With enough history, the app creates up to five expanding walk-forward folds split only on full-session boundaries."
                             )
                             .foregroundStyle(.secondary)
                         }
