@@ -11,6 +11,60 @@ enum BigShortWatchStatus:
         "INSUFFICIENT_EVENTS"
 }
 
+struct TailRiskDefinition:
+    Identifiable,
+    Codable,
+    Sendable {
+
+    let id: String
+    let title: String
+    let minimumDropPct: Double
+    let atrMultiple: Double
+    let severityRank: Int
+
+    static let developmentCandidates:
+        [TailRiskDefinition] = [
+            TailRiskDefinition(
+                id: "tail_watch_4",
+                title: "Tail Watch",
+                minimumDropPct: 0.0075,
+                atrMultiple: 4.0,
+                severityRank: 1
+            ),
+            TailRiskDefinition(
+                id: "big_short_6",
+                title: "Big Short",
+                minimumDropPct: 0.0125,
+                atrMultiple: 6.0,
+                severityRank: 2
+            ),
+            TailRiskDefinition(
+                id: "crash_watch_8",
+                title: "Crash Watch",
+                minimumDropPct: 0.015,
+                atrMultiple: 8.0,
+                severityRank: 3
+            )
+        ]
+}
+
+struct BigShortWatchExperiment:
+    Codable,
+    Sendable {
+
+    let symbol: String
+    let generatedAt: Date
+    let candidates: [BigShortWatchResult]
+    let recommended:
+        BigShortWatchResult?
+
+    var hasFrozenCandidate: Bool {
+        recommended?
+            .architectureFrozen
+        == true
+    }
+}
+
 struct BigShortFoldMetrics:
     Identifiable,
     Codable,
@@ -50,6 +104,9 @@ struct BigShortWatchResult:
 
     let symbol: String
     let generatedAt: Date
+    let tierID: String
+    let tierTitle: String
+    let severityRank: Int
     let horizonMinutes: Int
     let minimumDropPct: Double
     let atrMultiple: Double
@@ -102,6 +159,18 @@ struct BigShortWatchResult:
         )
     }
 
+    var meanF2: Double {
+        mean(
+            folds
+                .filter {
+                    $0.testEvents > 0
+                }
+                .map {
+                    $0.f2
+                }
+        )
+    }
+
     var status: BigShortWatchStatus {
         if eventFoldCount < 2
             || totalTestEvents < 4 {
@@ -139,8 +208,6 @@ struct BigShortWatchResult:
 }
 
 enum BigShortWatchEngine {
-    static let minimumDropPct = 0.015
-    static let atrMultiple = 8.0
     private struct Example {
         let timestamp: Date
         let sessionKey: String
@@ -223,14 +290,14 @@ enum BigShortWatchEngine {
         }
     }
 
-    static func run(
+    static func runExperiment(
         symbol: String,
         rows: [ResearchRow],
         folds: [WalkForwardFold],
         horizonMinutes: Int,
         contextBars:
             [String: [MarketBar]]
-    ) -> BigShortWatchResult {
+    ) -> BigShortWatchExperiment {
         let context =
             buildMarketContextFeatures(
                 rows: rows,
@@ -244,6 +311,120 @@ enum BigShortWatchEngine {
             : Double(context.count)
                 / Double(rows.count)
 
+        var candidates:
+            [BigShortWatchResult] = []
+
+        for definition in
+            TailRiskDefinition
+                .developmentCandidates {
+
+            if Task.isCancelled {
+                break
+            }
+
+            candidates.append(
+                runCandidate(
+                    symbol: symbol,
+                    definition:
+                        definition,
+                    rows: rows,
+                    folds: folds,
+                    horizonMinutes:
+                        horizonMinutes,
+                    context:
+                        context,
+                    contextCoverage:
+                        coverage
+                )
+            )
+        }
+
+        let ready =
+            candidates
+                .filter {
+                    $0.status == .ready
+                }
+                .max {
+                    $0.severityRank
+                        < $1.severityRank
+                }
+
+        let review =
+            candidates
+                .filter {
+                    $0.status == .review
+                }
+                .max {
+                    lhs,
+                    rhs in
+
+                    let lhsScore =
+                        lhs.meanF2
+                        - max(
+                            0,
+                            lhs.meanAlertRate
+                                - 0.20
+                        )
+
+                    let rhsScore =
+                        rhs.meanF2
+                        - max(
+                            0,
+                            rhs.meanAlertRate
+                                - 0.20
+                        )
+
+                    if abs(
+                        lhsScore
+                            - rhsScore
+                    ) > 1e-12 {
+                        return lhsScore
+                            < rhsScore
+                    }
+
+                    return lhs.severityRank
+                        < rhs.severityRank
+                }
+
+        let fallback =
+            candidates.max {
+                lhs,
+                rhs in
+
+                if lhs.totalTestEvents
+                    != rhs.totalTestEvents {
+
+                    return lhs.totalTestEvents
+                        < rhs.totalTestEvents
+                }
+
+                return lhs.severityRank
+                    < rhs.severityRank
+            }
+
+        return BigShortWatchExperiment(
+            symbol: symbol,
+            generatedAt: Date(),
+            candidates:
+                candidates,
+            recommended:
+                ready
+                ?? review
+                ?? fallback
+        )
+    }
+
+    private static func runCandidate(
+        symbol: String,
+        definition:
+            TailRiskDefinition,
+        rows: [ResearchRow],
+        folds: [WalkForwardFold],
+        horizonMinutes: Int,
+        context:
+            [String: [Double]],
+        contextCoverage: Double
+    ) -> BigShortWatchResult {
         var results:
             [BigShortFoldMetrics] = []
 
@@ -257,7 +438,9 @@ enum BigShortWatchEngine {
                     fold: fold,
                     rows: rows,
                     context:
-                        context
+                        context,
+                    definition:
+                        definition
                 ) {
 
                 results.append(
@@ -269,15 +452,21 @@ enum BigShortWatchEngine {
         return BigShortWatchResult(
             symbol: symbol,
             generatedAt: Date(),
+            tierID:
+                definition.id,
+            tierTitle:
+                definition.title,
+            severityRank:
+                definition.severityRank,
             horizonMinutes:
                 horizonMinutes,
             minimumDropPct:
-                minimumDropPct,
+                definition.minimumDropPct,
             atrMultiple:
-                atrMultiple,
+                definition.atrMultiple,
             featureCount: 28,
             contextCoverage:
-                coverage,
+                contextCoverage,
             folds: results
         )
     }
@@ -286,7 +475,9 @@ enum BigShortWatchEngine {
         fold: WalkForwardFold,
         rows: [ResearchRow],
         context:
-            [String: [Double]]
+            [String: [Double]],
+        definition:
+            TailRiskDefinition
     ) -> BigShortFoldMetrics? {
         let trainRows =
             rows.filter {
@@ -315,20 +506,26 @@ enum BigShortWatchEngine {
         let rawTrain =
             examples(
                 rows: trainRows,
-                context: context
+                context: context,
+                definition:
+                    definition
             )
 
         let rawValidation =
             examples(
                 rows:
                     validationRows,
-                context: context
+                context: context,
+                definition:
+                    definition
             )
 
         let rawTest =
             examples(
                 rows: testRows,
-                context: context
+                context: context,
+                definition:
+                    definition
             )
 
         guard
@@ -1182,7 +1379,9 @@ enum BigShortWatchEngine {
     private static func examples(
         rows: [ResearchRow],
         context:
-            [String: [Double]]
+            [String: [Double]],
+        definition:
+            TailRiskDefinition
     ) -> [Example] {
         rows.compactMap { row in
             guard
@@ -1194,8 +1393,10 @@ enum BigShortWatchEngine {
 
             let severeDrop =
                 max(
-                    minimumDropPct,
-                    atrMultiple
+                    definition
+                        .minimumDropPct,
+                    definition
+                        .atrMultiple
                     * row.atr14Pct
                 )
 
