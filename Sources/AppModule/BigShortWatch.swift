@@ -389,7 +389,7 @@ enum BigShortWatchEngine {
         let ready =
             candidates
                 .filter {
-                    $0.status == .ready
+                    $0.architectureFrozen
                 }
                 .max {
                     $0.severityRank
