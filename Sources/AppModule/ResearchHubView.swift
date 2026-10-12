@@ -189,6 +189,8 @@ struct ResearchHubView: View {
 
                 directionalGateSection
 
+                bigShortWatchSection
+
                 sealedHoldoutSection
 
             } else {
