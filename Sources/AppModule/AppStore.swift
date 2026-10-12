@@ -178,6 +178,10 @@ final class AppStore: ObservableObject {
         BigShortWatchResult?
 
     @Published private(set)
+    var bigShortCandidates:
+        [BigShortWatchResult] = []
+
+    @Published private(set)
     var bigShortBySymbol:
         [String: BigShortWatchResult] = [:]
 
@@ -294,7 +298,7 @@ final class AppStore: ObservableObject {
         Task<Void, Never>?
 
     private var bigShortTrainingTask:
-        Task<BigShortWatchResult, Never>?
+        Task<BigShortWatchExperiment, Never>?
 
     private var bigShortWatchdogTask:
         Task<Void, Never>?
@@ -804,6 +808,13 @@ final class AppStore: ObservableObject {
                 bigShortBySymbol[
                     asset.symbol
                 ]
+
+            bigShortCandidates =
+                bigShortResult
+                .map {
+                    [$0]
+                }
+                ?? []
 
             bigShortMessage =
                 bigShortResult == nil
@@ -1748,6 +1759,7 @@ final class AppStore: ObservableObject {
             researchFolds = []
             labelCalibration = nil
             bigShortResult = nil
+            bigShortCandidates = []
             bigShortMessage =
                 "Historical data changed; Big Short Watch must be retrained."
 
@@ -3446,23 +3458,24 @@ final class AppStore: ObservableObject {
                 priority:
                     .userInitiated
             ) {
-                BigShortWatchEngine.run(
-                    symbol:
-                        asset.symbol,
-                    rows: rows,
-                    folds: folds,
-                    horizonMinutes:
-                        locked.policy
-                            .horizonMinutes,
-                    contextBars:
-                        contextBars
-                )
+                BigShortWatchEngine
+                    .runExperiment(
+                        symbol:
+                            asset.symbol,
+                        rows: rows,
+                        folds: folds,
+                        horizonMinutes:
+                            locked.policy
+                                .horizonMinutes,
+                        contextBars:
+                            contextBars
+                    )
             }
 
         bigShortTrainingTask =
             trainingTask
 
-        let result =
+        let experiment =
             await trainingTask.value
 
         if trainingTask.isCancelled
@@ -3479,6 +3492,24 @@ final class AppStore: ObservableObject {
             return
         }
 
+        bigShortCandidates =
+            experiment.candidates
+
+        guard let result =
+            experiment.recommended
+        else {
+            bigShortResult = nil
+            bigShortMessage =
+                "Big Short Watch produced no usable tier candidate."
+
+            log(
+                "error",
+                bigShortMessage
+            )
+
+            return
+        }
+
         bigShortResult =
             result
 
@@ -3486,18 +3517,21 @@ final class AppStore: ObservableObject {
             asset.symbol
         ] = result
 
+        let severityText =
+            "\(result.tierTitle) · max(\(String(format: "%.2f", result.minimumDropPct * 100))%, \(String(format: "%.0f", result.atrMultiple))×ATR14)"
+
         switch result.status {
         case .ready:
             bigShortMessage =
-                "Big Short Watch READY: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))% across rare-event development folds."
+                "\(severityText) READY: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%."
 
         case .review:
             bigShortMessage =
-                "Big Short Watch needs refinement: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%."
+                "\(severityText) has enough events but needs refinement: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%."
 
         case .insufficientEvents:
             bigShortMessage =
-                "Big Short Watch has insufficient rare-event sessions: \(result.totalTestEvents) severe sessions across \(result.eventFoldCount)/\(result.folds.count) development test folds. Add more historical sessions before freezing the detector."
+                "\(severityText) still has insufficient independent event sessions: \(result.totalTestEvents) across \(result.eventFoldCount)/\(result.folds.count) development test folds."
         }
 
         log(
