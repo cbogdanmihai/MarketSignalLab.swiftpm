@@ -189,7 +189,8 @@ struct ResearchHubView: View {
 
                 directionalGateSection
 
-                bigShortWatchSection
+                BigShortWatchView()
+                    .environmentObject(store)
 
                 sealedHoldoutSection
 
