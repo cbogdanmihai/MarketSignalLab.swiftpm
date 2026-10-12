@@ -289,6 +289,7 @@ struct ResearchHubView: View {
             .disabled(
                 store.isBuildingResearchDataset
                 || store.isDownloadingHistory
+                || store.isPreparingBigShortHistory
                 || store.isValidatingUniverse
             )
 
@@ -309,6 +310,7 @@ struct ResearchHubView: View {
             .disabled(
                 store.isCalibratingLabels
                 || store.isBuildingResearchDataset
+                || store.isPreparingBigShortHistory
                 || store.researchFolds.isEmpty
             )
 
@@ -2108,29 +2110,96 @@ struct ResearchHubView: View {
 
     private var emptyResearchState: some View {
         ResearchCard(
-            title: "No research dataset",
+            title:
+                store.isPreparingBigShortHistory
+                ? "Tail History Expansion"
+                : "No research dataset",
             subtitle:
-                "Build features and labels for the selected symbol"
+                store.isPreparingBigShortHistory
+                ? "The previous dataset is temporarily invalid while new 1-minute history is being added."
+                : "Build features and labels for the selected symbol"
         ) {
             VStack(
                 alignment: .leading,
-                spacing: 10
+                spacing: 12
             ) {
                 Text(
                     "Local bars: \(store.storageStats.count)"
                 )
                 .foregroundStyle(.secondary)
 
-                Text(store.researchMessage)
-                    .textSelection(.enabled)
+                if store.isPreparingBigShortHistory {
+                    HStack(spacing: 16) {
+                        ProgressView()
+                            .controlSize(.small)
 
-                if store.storageStats.count < 300 {
+                        VStack(
+                            alignment: .leading,
+                            spacing: 3
+                        ) {
+                            Text(
+                                store.bigShortHistoryWindowCount > 0
+                                ? "Window \(store.bigShortHistoryWindowIndex) / \(store.bigShortHistoryWindowCount)"
+                                : "Preparing history windows…"
+                            )
+                            .font(.headline)
+
+                            Text(
+                                store.bigShortHistoryMessage
+                            )
+                            .font(.caption)
+                            .foregroundStyle(
+                                .secondary
+                            )
+                            .textSelection(
+                                .enabled
+                            )
+                        }
+
+                        Spacer()
+                    }
+
+                    if store.isDownloadingHistory {
+                        HistoryRunMonitorView()
+                            .environmentObject(
+                                store
+                            )
+                    } else {
+                        Text(
+                            "Between provider windows the download monitor can briefly disappear; the overall 1-year workflow is still active."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(
+                            .secondary
+                        )
+                    }
+
                     Label(
-                        "Download historical data first.",
+                        "The research dataset will rebuild automatically only after all history windows finish. Do not press Build Dataset or Calibrate Labels during this operation.",
                         systemImage:
-                            "externaldrive.badge.exclamationmark"
+                            "arrow.triangle.2.circlepath"
                     )
-                    .foregroundStyle(.orange)
+                    .font(.caption)
+                    .foregroundStyle(
+                        .orange
+                    )
+
+                } else {
+                    Text(
+                        store.researchMessage
+                    )
+                    .textSelection(
+                        .enabled
+                    )
+
+                    if store.storageStats.count < 300 {
+                        Label(
+                            "Download historical data first.",
+                            systemImage:
+                                "externaldrive.badge.exclamationmark"
+                        )
+                        .foregroundStyle(.orange)
+                    }
                 }
             }
         }
