@@ -1989,23 +1989,51 @@ struct ResearchHubView: View {
                             title:
                                 "Status",
                             value:
-                                "SEALED",
+                                (
+                                    store
+                                        .researchSummary?
+                                        .sealedHoldoutSessionCount
+                                    ?? 0
+                                ) >= 3
+                                ? "SEALED"
+                                : "PENDING",
                             subtitle:
-                                "Never evaluated"
+                                (
+                                    store
+                                        .researchSummary?
+                                        .sealedHoldoutSessionCount
+                                    ?? 0
+                                ) >= 3
+                                ? "Never evaluated"
+                                : "Fresh prospective block required"
                         )
 
                         MetricTile(
                             title:
                                 "Sessions",
                             value:
-                                String(
+                                (
                                     store
                                         .researchSummary?
                                         .sealedHoldoutSessionCount
                                     ?? 0
-                                ),
+                                ) > 0
+                                ? String(
+                                    store
+                                        .researchSummary?
+                                        .sealedHoldoutSessionCount
+                                    ?? 0
+                                )
+                                : "FUTURE",
                             subtitle:
-                                "Reserved final block"
+                                (
+                                    store
+                                        .researchSummary?
+                                        .sealedHoldoutSessionCount
+                                    ?? 0
+                                ) > 0
+                                ? "Reserved final block"
+                                : "Collect after architecture freeze"
                         )
 
                         MetricTile(
@@ -2036,17 +2064,41 @@ struct ResearchHubView: View {
                         )
                     }
 
-                    Text(
-                        store.sealedHoldoutMessage
-                    )
-                    .font(.callout)
-                    .foregroundStyle(
-                        .secondary
-                    )
+                    if (
+                        store
+                            .researchSummary?
+                            .sealedHoldoutSessionCount
+                        ?? 0
+                    ) >= 3 {
+
+                        Text(
+                            store.sealedHoldoutMessage
+                        )
+                        .font(.callout)
+                        .foregroundStyle(
+                            .secondary
+                        )
+
+                    } else {
+                        Text(
+                            "No pristine final holdout is available after the expanded development run. Those historical sessions were already used during architecture development, so they will not be relabeled as unseen OOS data. After the tail-risk architecture is frozen, Phase 2E will use fresh future sessions as the prospective holdout."
+                        )
+                        .font(.callout)
+                        .foregroundStyle(
+                            .secondary
+                        )
+                    }
 
                     HStack {
                         Label(
-                            "Opening this block is irreversible for model-development purposes.",
+                            (
+                                store
+                                    .researchSummary?
+                                    .sealedHoldoutSessionCount
+                                ?? 0
+                            ) >= 3
+                            ? "Opening this block is irreversible for model-development purposes."
+                            : "Holdout remains locked until the architecture is frozen and fresh prospective sessions are available.",
                             systemImage:
                                 "exclamationmark.triangle.fill"
                         )
@@ -2095,6 +2147,12 @@ struct ResearchHubView: View {
                                 .bigShortResult?
                                 .architectureFrozen
                                 != true
+                            || (
+                                store
+                                    .researchSummary?
+                                    .sealedHoldoutSessionCount
+                                ?? 0
+                            ) < 3
                         )
                     }
 
