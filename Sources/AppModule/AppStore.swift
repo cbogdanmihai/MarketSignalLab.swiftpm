@@ -174,6 +174,35 @@ final class AppStore: ObservableObject {
         false
 
     @Published private(set)
+    var bigShortResult:
+        BigShortWatchResult?
+
+    @Published private(set)
+    var bigShortBySymbol:
+        [String: BigShortWatchResult] = [:]
+
+    @Published private(set)
+    var isTrainingBigShortWatch = false
+
+    @Published private(set)
+    var bigShortMessage =
+        "Big Short Watch has not been trained."
+
+    @Published private(set)
+    var bigShortTrainingStartedAt: Date?
+
+    @Published private(set)
+    var bigShortTrainingDeadline: Date?
+
+    @Published private(set)
+    var bigShortLastRunDuration:
+        TimeInterval?
+
+    @Published private(set)
+    var bigShortCancellationRequested =
+        false
+
+    @Published private(set)
     var isPreparingBaselineContext = false
 
     @Published private(set)
@@ -246,6 +275,12 @@ final class AppStore: ObservableObject {
         Task<BaselineExperimentResult, Never>?
 
     private var baselineWatchdogTask:
+        Task<Void, Never>?
+
+    private var bigShortTrainingTask:
+        Task<BigShortWatchResult, Never>?
+
+    private var bigShortWatchdogTask:
         Task<Void, Never>?
 
     private let validationDefaultsKey =
@@ -748,6 +783,16 @@ final class AppStore: ObservableObject {
                     asset.symbol
                 ]
                 ?? []
+
+            bigShortResult =
+                bigShortBySymbol[
+                    asset.symbol
+                ]
+
+            bigShortMessage =
+                bigShortResult == nil
+                ? "Big Short Watch has not been trained."
+                : "Loaded cached Big Short Watch result for \(asset.symbol)."
 
             baselineMessage =
                 baselineResult == nil
@@ -1662,6 +1707,12 @@ final class AppStore: ObservableObject {
                     asset.symbol
             )
 
+        bigShortBySymbol
+            .removeValue(
+                forKey:
+                    asset.symbol
+            )
+
         if baselineResult?.symbol
             == asset.symbol {
 
@@ -1677,6 +1728,9 @@ final class AppStore: ObservableObject {
             researchSummary = nil
             researchFolds = []
             labelCalibration = nil
+            bigShortResult = nil
+            bigShortMessage =
+                "Historical data changed; Big Short Watch must be retrained."
 
             labelCalibrationMessage =
                 "Historical data changed; calibration cache cleared. Any locked policy remains frozen until explicitly changed."
@@ -2915,6 +2969,270 @@ final class AppStore: ObservableObject {
         ]
         .joined(
             separator: "|"
+        )
+    }
+
+    func cancelBigShortWatchTraining() {
+        guard isTrainingBigShortWatch else {
+            return
+        }
+
+        bigShortCancellationRequested =
+            true
+
+        bigShortTrainingTask?
+            .cancel()
+
+        bigShortMessage =
+            "Cancelling Big Short Watch training…"
+
+        log(
+            "warning",
+            bigShortMessage
+        )
+    }
+
+    func trainBigShortWatch() async {
+        guard
+            let asset =
+                selectedAsset,
+            let locked =
+                selectedLockedLabelPolicy
+        else {
+            bigShortMessage =
+                "Lock the label policy before training Big Short Watch."
+
+            log(
+                "warning",
+                bigShortMessage
+            )
+
+            return
+        }
+
+        guard
+            !isTrainingBigShortWatch,
+            !isTrainingBaseline
+        else {
+            return
+        }
+
+        if researchRows.isEmpty
+            || researchSummary?.symbol
+                != asset.symbol
+            || researchSummary?
+                .usesLockedPolicy
+                != true {
+
+            bigShortMessage =
+                "Rebuilding the locked-policy research dataset before Big Short Watch training…"
+
+            await buildResearchDataset()
+        }
+
+        guard
+            !researchRows.isEmpty,
+            researchFolds.count >= 3,
+            researchSummary?
+                .usesLockedPolicy
+                == true
+        else {
+            bigShortMessage =
+                "Big Short Watch requires the locked-policy dataset with three development folds."
+
+            log(
+                "warning",
+                bigShortMessage
+            )
+
+            return
+        }
+
+        var contextBars:
+            [String: [MarketBar]] = [:]
+
+        for symbol in [
+            "SPY",
+            "IWM",
+            "VIXY"
+        ] {
+            let loaded =
+                (try? await repository.load(
+                    symbol: symbol,
+                    timeframe: "1min"
+                ))
+                ?? []
+
+            contextBars[symbol] =
+                loaded
+
+            log(
+                loaded.isEmpty
+                ? "warning"
+                : "info",
+                "Big Short context \(symbol): \(loaded.count) local 1-minute bars."
+            )
+        }
+
+        let rows =
+            researchRows
+
+        let folds =
+            researchFolds
+
+        isTrainingBigShortWatch =
+            true
+
+        let startedAt =
+            Date()
+
+        bigShortTrainingStartedAt =
+            startedAt
+
+        bigShortTrainingDeadline =
+            startedAt.addingTimeInterval(
+                2 * 60
+            )
+
+        bigShortLastRunDuration =
+            nil
+
+        bigShortCancellationRequested =
+            false
+
+        bigShortMessage =
+            "Training recall-oriented Big Short Watch on development folds only…"
+
+        log(
+            "info",
+            bigShortMessage
+        )
+
+        bigShortWatchdogTask?
+            .cancel()
+
+        bigShortWatchdogTask =
+            Task { [weak self] in
+                try? await Task.sleep(
+                    nanoseconds:
+                        120_000_000_000
+                )
+
+                guard
+                    !Task.isCancelled,
+                    let self,
+                    self.isTrainingBigShortWatch
+                else {
+                    return
+                }
+
+                self.bigShortCancellationRequested =
+                    true
+
+                self.bigShortTrainingTask?
+                    .cancel()
+
+                self.bigShortMessage =
+                    "Big Short Watch watchdog stopped training after 2 minutes."
+
+                self.log(
+                    "error",
+                    self.bigShortMessage
+                )
+            }
+
+        defer {
+            bigShortWatchdogTask?
+                .cancel()
+
+            bigShortWatchdogTask = nil
+
+            bigShortTrainingTask = nil
+
+            if let started =
+                bigShortTrainingStartedAt {
+
+                bigShortLastRunDuration =
+                    Date()
+                        .timeIntervalSince(
+                            started
+                        )
+            }
+
+            bigShortTrainingStartedAt =
+                nil
+
+            bigShortTrainingDeadline =
+                nil
+
+            isTrainingBigShortWatch =
+                false
+        }
+
+        let trainingTask =
+            Task.detached(
+                priority:
+                    .userInitiated
+            ) {
+                BigShortWatchEngine.run(
+                    symbol:
+                        asset.symbol,
+                    rows: rows,
+                    folds: folds,
+                    horizonMinutes:
+                        locked.policy
+                            .horizonMinutes,
+                    contextBars:
+                        contextBars
+                )
+            }
+
+        bigShortTrainingTask =
+            trainingTask
+
+        let result =
+            await trainingTask.value
+
+        if trainingTask.isCancelled
+            || bigShortCancellationRequested {
+
+            bigShortMessage =
+                "Big Short Watch training cancelled. No partial result was saved."
+
+            log(
+                "warning",
+                bigShortMessage
+            )
+
+            return
+        }
+
+        bigShortResult =
+            result
+
+        bigShortBySymbol[
+            asset.symbol
+        ] = result
+
+        switch result.status {
+        case .ready:
+            bigShortMessage =
+                "Big Short Watch READY: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))% across rare-event development folds."
+
+        case .review:
+            bigShortMessage =
+                "Big Short Watch needs refinement: recall \(Int(round(result.meanRecall * 100)))%, precision \(Int(round(result.meanPrecision * 100)))%, alert rate \(Int(round(result.meanAlertRate * 100)))%."
+
+        case .insufficientEvents:
+            bigShortMessage =
+                "Big Short Watch has insufficient rare events: \(result.totalTestEvents) severe events across \(result.eventFoldCount)/\(result.folds.count) development test folds. Add more historical sessions before freezing the detector."
+        }
+
+        log(
+            result.status == .ready
+            ? "info"
+            : "warning",
+            bigShortMessage
         )
     }
 
