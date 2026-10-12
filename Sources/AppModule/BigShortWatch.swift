@@ -110,7 +110,7 @@ struct BigShortWatchResult:
         }
 
         if meanRecall >= 0.60
-            && meanPrecision >= 0.08
+            && meanPrecision >= 0.10
             && meanAlertRate <= 0.20 {
 
             return .ready
