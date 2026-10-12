@@ -1732,7 +1732,7 @@ struct ResearchHubView: View {
             title:
                 "Phase 2E · Sealed Holdout",
             subtitle:
-                "One-time final OOS check for the frozen directional architecture"
+                "One-time final OOS check after directional gate and tail-risk watch are frozen"
         ) {
             VStack(
                 alignment: .leading,
@@ -2089,6 +2089,10 @@ struct ResearchHubView: View {
                                     .enabled
                                 != true
                             )
+                            || store
+                                .bigShortResult?
+                                .architectureFrozen
+                                != true
                         )
                     }
 
